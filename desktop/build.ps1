@@ -1,6 +1,6 @@
 # Build the desktop app (Windows)
 $ErrorActionPreference = "Stop"
-$py = "C:\Users\user\AppData\Local\Programs\Python\Python312\python.exe"
+$py = if (Get-Command python -ErrorAction SilentlyContinue) { (Get-Command python).Source } else { "python" }
 Push-Location (Resolve-Path "$PSScriptRoot\..")
 & $py -m PyInstaller desktop\spotify-dashboard.spec --noconfirm
 Pop-Location
