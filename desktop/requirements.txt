@@ -1,0 +1,3 @@
+-r ../server/requirements.api.txt
+pywebview>=4.4
+pyinstaller>=6.0
