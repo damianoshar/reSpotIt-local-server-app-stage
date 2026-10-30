@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { ApiError } from '../api/client'
 
 const GOLD = '#1DB954'
@@ -103,7 +103,7 @@ export function LoginGate({ onAuthenticate, onForgot }) {
           <input
             type="password" value={password} onChange={(e) => setPassword(e.target.value)}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            placeholder="β€Άβ€Άβ€Άβ€Άβ€Άβ€Άβ€Άβ€Ά" style={{ ...field, marginBottom: '1rem' }}
+            placeholder="••••••••" style={{ ...field, marginBottom: '1rem' }}
           />
 
           {mode === 'register' && (<>
@@ -114,7 +114,7 @@ export function LoginGate({ onAuthenticate, onForgot }) {
             <input
               type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
               autoComplete="new-password"
-              placeholder="β€Άβ€Άβ€Άβ€Άβ€Άβ€Άβ€Άβ€Ά" style={{ ...field, marginBottom: '1rem' }}
+              placeholder="••••••••" style={{ ...field, marginBottom: '1rem' }}
             />
           </>)}
 
