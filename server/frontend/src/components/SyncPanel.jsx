@@ -182,7 +182,7 @@ export function SyncPanel({ pipeline, imagesJob, loadJob, spotifyLinked = true }
 
             {isDone && expanded && (
               <div className="mt-3 font-mono text-[0.72rem]" style={{ color: '#1DB954' }}>
-                β“ Library synced β€” {steps[2]?.data?.inserted ?? '?'} inserted,{' '}
+                ✓ Library synced β€” {steps[2]?.data?.inserted ?? '?'} inserted,{' '}
                 {steps[2]?.data?.updated ?? '?'} updated.
               </div>
             )}

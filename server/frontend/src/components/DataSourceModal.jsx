@@ -210,7 +210,7 @@ export function DataSourcePanel({ ds, onToast }) {
               {testResult && (
                 <div className="font-mono text-[0.7rem] mt-2"
                      style={{ color: testResult.ok ? '#1DB954' : '#E22134' }}>
-                  {testResult.ok ? 'β“ ' : 'β• '}{testResult.message}
+                  {testResult.ok ? '✓ ' : 'β• '}{testResult.message}
                 </div>
               )}
               <p className="text-xs text-muted mt-2 mb-5">

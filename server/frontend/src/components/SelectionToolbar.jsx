@@ -35,8 +35,8 @@ export function SelectionToolbar({
         })
         const failed = res.failed || 0
         notify(
-          failed ? `β“ Queued ${res.queued} tracks (${failed} failed)`
-                 : `β“ Queued ${res.queued} tracks`,
+          failed ? `✓ Queued ${res.queued} tracks (${failed} failed)`
+                 : `✓ Queued ${res.queued} tracks`,
           !failed
         )
       } else {
@@ -45,8 +45,8 @@ export function SelectionToolbar({
         })
         const failed = res.failed || 0
         notify(
-          failed ? `β“ Queued ${res.queued} tracks (${failed} failed)`
-                 : `β“ Queued ${res.queued} tracks`,
+          failed ? `✓ Queued ${res.queued} tracks (${failed} failed)`
+                 : `✓ Queued ${res.queued} tracks`,
           !failed
         )
       }
