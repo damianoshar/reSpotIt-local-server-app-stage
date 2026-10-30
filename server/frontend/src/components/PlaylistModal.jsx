@@ -129,7 +129,7 @@ export function PlaylistModal({ mode, albumIds, onClose, localMode = false }) {
               <input
                 autoFocus
                 className="filter-input"
-                placeholder="My awesome playlistβ€¦"
+                placeholder="My awesome playlist…"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && canSubmit && handleSubmit()}
@@ -142,7 +142,7 @@ export function PlaylistModal({ mode, albumIds, onClose, localMode = false }) {
             <>
               {loadingPL ? (
                 <div style={{ color: '#B3B3B3', fontSize: '0.85rem', padding: '12px 0' }}>
-                  Loading playlistsβ€¦
+                  Loading playlists…
                 </div>
               ) : playlists.length === 0 && !status ? (
                 <div style={{ color: '#B3B3B3', fontSize: '0.85rem' }}>No playlists found.</div>
@@ -189,7 +189,7 @@ export function PlaylistModal({ mode, albumIds, onClose, localMode = false }) {
                         display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancel</button>
             <button className="btn btn-primary" onClick={handleSubmit} disabled={!canSubmit}>
-              {loading ? 'β€¦' : mode === 'create' ? 'Create' : 'Add'}
+              {loading ? '…' : mode === 'create' ? 'Create' : 'Add'}
             </button>
           </div>
         ) : (

@@ -1,7 +1,7 @@
 /**
  * DataSourceModal
  *
- * Where the app is told which library to use: the server (nginx β†’ FastAPI, the
+ * Where the app is told which library to use: the server (nginx ↓ FastAPI, the
  * default and the only place the Spotify sync pipeline can run) or a local
  * on-device library in IndexedDB.
  *
@@ -204,7 +204,7 @@ export function DataSourcePanel({ ds, onToast }) {
                   disabled={testing}
                   onClick={async () => { setServerUrl(urlDraft); await testConnection() }}
                 >
-                  {testing ? 'β€¦' : 'Test'}
+                  {testing ? '…' : 'Test'}
                 </button>
               </div>
               {testResult && (
@@ -228,7 +228,7 @@ export function DataSourcePanel({ ds, onToast }) {
             <>
               <div style={LABEL}>Local library</div>
               <div className="font-mono text-xs text-secondary mt-2 mb-3">
-                {localCount === null ? 'Readingβ€¦' : `${localCount.toLocaleString()} album${localCount === 1 ? '' : 's'} stored in this browser`}
+                {localCount === null ? 'Reading…' : `${localCount.toLocaleString()} album${localCount === 1 ? '' : 's'} stored in this browser`}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <label className="btn btn-ghost btn-sm" style={{ cursor: busy ? 'default' : 'pointer' }}>
@@ -272,7 +272,7 @@ export function DataSourcePanel({ ds, onToast }) {
                   </ul>
                   {lastImport.errors.length > 10 && (
                     <div className="font-mono text-[0.62rem] text-muted mt-1">
-                      β€¦and {lastImport.errors.length - 10} more
+                      …and {lastImport.errors.length - 10} more
                     </div>
                   )}
                 </div>

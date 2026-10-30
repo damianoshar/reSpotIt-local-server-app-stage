@@ -93,7 +93,7 @@ function QuickJobRow({ label, job, onCancel, onDismiss }) {
 
         {isRunning && (
           <button className="btn btn-ghost btn-sm" style={{ color: '#E22134' }} onClick={onCancel}>
-            β—Ό Stop
+            ■ Stop
           </button>
         )}
         {!isRunning && (
@@ -129,7 +129,7 @@ export function SyncPanel({ pipeline, imagesJob, loadJob, spotifyLinked = true }
   if (!showPanel) return null
 
   const statusLabel =
-    isRunning    ? `Syncingβ€¦ ${overallPct}%`
+    isRunning    ? `Syncing… ${overallPct}%`
     : isDone     ? 'Sync complete'
     : hasError   ? 'Sync failed'
     : isCancelled? 'Sync cancelled'
@@ -149,7 +149,7 @@ export function SyncPanel({ pipeline, imagesJob, loadJob, spotifyLinked = true }
                   <button className="btn btn-sm"
                     style={{ background: '#3a1a1a', color: '#E22134', border: '1px solid #5a2a2a' }}
                     onClick={stop}>
-                    β—Ό Stop
+                    ■ Stop
                   </button>
                 )}
                 {!isRunning && (isDone || hasError || isCancelled) && spotifyLinked && (
@@ -158,7 +158,7 @@ export function SyncPanel({ pipeline, imagesJob, loadJob, spotifyLinked = true }
                   </button>
                 )}
                 <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(e => !e)}>
-                  {expanded ? 'β†‘' : 'β†“'}
+                  {expanded ? '↑' : 'β†“'}
                 </button>
                 {!isRunning && (
                   <button className="btn btn-ghost btn-sm" onClick={reset} title="Dismiss">Γ—</button>

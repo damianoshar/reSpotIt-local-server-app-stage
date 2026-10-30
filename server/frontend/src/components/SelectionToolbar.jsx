@@ -120,7 +120,7 @@ export function SelectionToolbar({
             disabled={queueing}
             title="Add to queue"
           >
-            {queueing ? 'β€¦' : 'β–¶ Add to Queue'}
+            {queueing ? '…' : 'β–¶ Add to Queue'}
           </button>
         </>
       )}

@@ -31,7 +31,7 @@ export function AuthButton({ authenticated, user, displayName, loading, signingI
                    fontWeight: 700, opacity: signingIn ? 0.7 : 1 }}
           onClick={onSignIn} disabled={signingIn}>
           <SpotifyLogo size={16} color="#000" />
-          {signingIn ? 'Connectingβ€¦' : 'Sign in'}
+          {signingIn ? 'Connecting…' : 'Sign in'}
         </button>
       )
     }
@@ -77,7 +77,7 @@ export function AuthButton({ authenticated, user, displayName, loading, signingI
               style={{ width: '100%', justifyContent: 'flex-start', borderRadius: 0,
                        padding: '10px 14px', fontSize: '0.68rem', color: GREEN }}>
               <SpotifyLogo size={14} color={GREEN} />
-              {signingIn ? 'Connectingβ€¦' : 'Connect Spotify'}
+              {signingIn ? 'Connecting…' : 'Connect Spotify'}
             </button>
 
             <button onClick={() => { setOpen(false); onSignOut() }}
