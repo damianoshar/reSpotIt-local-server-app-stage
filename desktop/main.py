@@ -1,8 +1,9 @@
 """Desktop launcher for reSpotIt (Windows / Linux).
 
 Runs the FastAPI backend as a background service with a system-tray icon.
-The native window opens on launch; closing it hides to the tray (server keeps
-running). Use the tray menu to Show / Restart / Quit.
+The native window opens on launch (on the main thread, as required by
+pywebview); closing it hides to the tray (server keeps running). Use the tray
+menu to Show / Restart / Quit.
 """
 
 import argparse
@@ -78,7 +79,8 @@ class App:
 
     def start_server(self):
         if self.running:
-            return
+            return True
+        self._env_setup()
         import uvicorn
         from api.main import app as fastapi_app
 
@@ -87,7 +89,6 @@ class App:
             print(f"Port {self.requested_port} in use; using {self.port}. "
                   f"OAuth (registered for {self.requested_port}) will not work on this port.")
 
-        self._env_setup()
         config = uvicorn.Config(fastapi_app, host="127.0.0.1", port=self.port, log_level="info")
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
@@ -115,7 +116,12 @@ class App:
     def restart_server(self):
         self.stop_server()
         self.start_server()
-        self._open_window()
+        if self.window:
+            try:
+                self.window.load_url(f"http://127.0.0.1:{self.port}")
+                self.window.show()
+            except Exception:
+                pass
 
     def _open_window(self):
         url = f"http://127.0.0.1:{self.port}"
@@ -123,7 +129,6 @@ class App:
             import webview
             if self.window is None:
                 self.window = webview.create_window("reSpotIt", url, width=1280, height=820)
-                webview.start(self._on_window_closed, debug=False)
             else:
                 self.window.load_url(url)
                 self.window.show()
@@ -131,13 +136,17 @@ class App:
             print(f"Native window unavailable ({e}); opening browser.")
             webbrowser.open(url)
 
-    def _on_window_closed(self):
-        # Hide to tray instead of quitting
+    def _show(self, icon=None, item=None):
         if self.window:
             try:
-                self.window.hide()
+                self.window.show()
             except Exception:
-                pass
+                self._open_window()
+        else:
+            self._open_window()
+
+    def _restart(self, icon=None, item=None):
+        self.restart_server()
 
     def _quit(self, icon=None, item=None):
         self.stop_server()
@@ -153,17 +162,10 @@ class App:
                 pass
         sys.exit(0)
 
-    def _show(self, icon=None, item=None):
-        self._open_window()
-
-    def _restart(self, icon=None, item=None):
-        self.restart_server()
-
     def run_tray(self):
         try:
             import pystray
             from PIL import Image, ImageDraw
-            # Build a simple icon
             img = Image.new("RGB", (64, 64), (25, 20, 20))
             draw = ImageDraw.Draw(img)
             draw.ellipse((16, 16, 48, 48), fill=(29, 185, 84))
@@ -176,7 +178,7 @@ class App:
             self.tray = pystray.Icon("reSpotIt", img, "reSpotIt", menu)
             self.tray.run()
         except Exception as e:
-            print(f"Tray unavailable ({e}); running in foreground.")
+            print(f"Tray unavailable ({e}); running without tray.")
             try:
                 while True:
                     time.sleep(1)
@@ -185,7 +187,6 @@ class App:
             self._quit()
 
     def run(self, no_window=False):
-        # Redirect stdio in windowed mode
         if sys.stdout is None or sys.stderr is None:
             ld = self.data / "logs"
             ld.mkdir(parents=True, exist_ok=True)
@@ -198,10 +199,30 @@ class App:
         try:
             if not self.start_server():
                 sys.exit(1)
-            if not no_window:
-                # Open window in a separate thread so tray can run on main
-                threading.Thread(target=self._open_window, daemon=True).start()
-            self.run_tray()
+            if no_window:
+                print(f"reSpotIt running at http://127.0.0.1:{self.port}. Press Ctrl+C to stop.")
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+                self.stop_server()
+                return
+            # tray on a daemon thread; window on the main thread (required by pywebview)
+            threading.Thread(target=self.run_tray, daemon=True).start()
+            self._open_window()
+            try:
+                import webview
+                webview.start()
+            except Exception as e:
+                print(f"Native window unavailable ({e}); opening browser.")
+                webbrowser.open(f"http://127.0.0.1:{self.port}")
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+            self._quit()
         except Exception:
             import traceback
             try:
@@ -248,17 +269,21 @@ def main():
     dd = Path(args.data_dir) if args.data_dir else data_dir()
     app = App(args.port, dd)
     if args.no_tray:
-        # simple mode: server runs while window is open
         app._env_setup()
         if not app.start_server():
             sys.exit(1)
         app._open_window()
-        # block until window closes
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
+            import webview
+            webview.start()
+        except Exception as e:
+            print(f"Native window unavailable ({e}); opening browser.")
+            webbrowser.open(f"http://127.0.0.1:{app.port}")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
         app.stop_server()
     else:
         app.run(no_window=args.no_window)
