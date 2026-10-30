@@ -1,4 +1,6 @@
-# Production Readiness — reSpotIt Local Server App
+## Version
+v1.0 — Windows desktop (Python server + React frontend + SQLite). Build date: 2026-10-30.
+Download: reSpotIt-Windows-v1.0.zip (SHA256: F9A2CF887B2CA15C41FFDF33556C23471328147FAB3EB8DDFB984840C82F7331)
 
 Everything under this folder (`reSpotIt-local-server-app`) is considered **production**.
 
