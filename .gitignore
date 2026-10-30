@@ -1,0 +1,5 @@
+*.zip
+SHA256SUMS.txt
+desktop/dist/
+desktop/build/
+
