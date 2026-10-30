@@ -193,31 +193,47 @@ export async function playUris(uris, getTokenOverride) {
 }
 
 export async function toggleWebPlayback() {
-  await player?.togglePlay?.()
+  const token = await getToken()
+  const state = getWebPlaybackState()
+  const id = deviceId
+  const endpoint = state.playing ? 'pause' : 'play'
+  const url = id
+    ? `https://api.spotify.com/v1/me/player/${endpoint}?device_id=${encodeURIComponent(id)}`
+    : `https://api.spotify.com/v1/me/player/${endpoint}`
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok && response.status !== 204) {
+    const text = await response.text()
+    throw new Error(`Spotify ${endpoint} failed (${response.status}): ${text}`)
+  }
+  // Mirror on SDK instance.
+  try { await player?.togglePlay?.() } catch { /* ignore */ }
 }
 
 export async function nextWebPlayback() {
   const token = await getToken()
-  const id = deviceId
-  const url = id
-    ? `https://api.spotify.com/v1/me/player/next?device_id=${encodeURIComponent(id)}`
-    : 'https://api.spotify.com/v1/me/player/next'
-  const response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  // Operate on the active device (don't force device_id, which can target a
+  // non-playing SDK device and silently no-op).
+  const response = await fetch('https://api.spotify.com/v1/me/player/next', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
   if (!response.ok && response.status !== 204) {
     const text = await response.text()
     throw new Error(`Spotify next failed (${response.status}): ${text}`)
   }
-  // also try SDK method as fallback
+  // Mirror on the SDK instance when it is the active device.
   try { await player?.nextTrack?.() } catch { /* ignore */ }
 }
 
 export async function previousWebPlayback() {
   const token = await getToken()
-  const id = deviceId
-  const url = id
-    ? `https://api.spotify.com/v1/me/player/previous?device_id=${encodeURIComponent(id)}`
-    : 'https://api.spotify.com/v1/me/player/previous'
-  const response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  const response = await fetch('https://api.spotify.com/v1/me/player/previous', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
   if (!response.ok && response.status !== 204) {
     const text = await response.text()
     throw new Error(`Spotify previous failed (${response.status}): ${text}`)
@@ -226,7 +242,21 @@ export async function previousWebPlayback() {
 }
 
 export async function seekWebPlayback(value) {
-  await player?.seek?.(Number(value))
+  const token = await getToken()
+  const positionMs = Number(value)
+  const id = deviceId
+  const url = id
+    ? `https://api.spotify.com/v1/me/player/seek?position_ms=${positionMs}&device_id=${encodeURIComponent(id)}`
+    : `https://api.spotify.com/v1/me/player/seek?position_ms=${positionMs}`
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok && response.status !== 204) {
+    const text = await response.text()
+    throw new Error(`Spotify seek failed (${response.status}): ${text}`)
+  }
+  try { await player?.seek?.(positionMs) } catch { /* ignore */ }
 }
 
 export async function setWebPlaybackVolume(value) {
