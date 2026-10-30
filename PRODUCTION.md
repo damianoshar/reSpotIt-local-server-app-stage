@@ -1,12 +1,12 @@
-# Production Readiness щаж reSpotIt Local Server App
+# Production Readiness О©╫О©╫О©╫ reSpotIt Local Server App
 
 Everything under this folder (`reSpotIt-local-server-app`) is considered **production**.
 
 ## Scope
-- `server/` щаж FastAPI backend + React frontend + Postgres migrations + Dockerfiles.
-- `desktop/` щаж self-contained Windows/Linux desktop app (PyInstaller, SQLite).
-- `scripts/` щаж backup helpers.
-- `docker-compose.yml` щаж full stack (db + api + frontend).
+- `server/` О©╫О©╫О©╫ FastAPI backend + React frontend + Postgres migrations + Dockerfiles.
+- `desktop/` О©╫О©╫О©╫ self-contained Windows/Linux desktop app (PyInstaller, SQLite).
+- `scripts/` О©╫О©╫О©╫ backup helpers.
+- `docker-compose.yml` О©╫О©╫О©╫ full stack (db + api + frontend).
 
 ## Constraints
 1. **No personal data in source.** No usernames, emails, absolute user paths, or secrets are committed. `.env` is gitignored; use `.env.example` as template.
@@ -16,7 +16,7 @@ Everything under this folder (`reSpotIt-local-server-app`) is considered **produ
 5. **No hardcoded paths.** `desktop/build.ps1` resolves Python via `PATH`. Migrations and frontend dist are located relative to the package (`sys._MEIPASS` / repo layout).
 6. **Build artifacts are gitignored.** `node_modules/`, `dist/`, `build/`, `__pycache__/`, `.tmp-render/`, `data/images/`, `*.db` are never committed; CI/Docker rebuilds them.
 7. **Tests must pass before release.** `cd server && pytest tests` (35 tests) and `npm run verify:local` (frontend) must be green.
-8. **Docker smoke.** `docker compose up -d` щгт all containers healthy; `GET /api/v1/health` = 200; `GET /` = 200.
+8. **Docker smoke.** `docker compose up -d` О©╫О©╫О©╫ all containers healthy; `GET /api/v1/health` = 200; `GET /` = 200.
 9. **Desktop smoke.** `reSpotIt.exe` starts, serves frontend + API on the configured port, opens native window; register/login/albums round-trip works on SQLite.
 10. **No direct DB access from frontend.** All data goes through `/api/v1/*`.
 
@@ -30,4 +30,8 @@ Everything under this folder (`reSpotIt-local-server-app`) is considered **produ
 
 ## Owner
 Project maintainer (contact via GitHub).
+
+## Version
+v1.2 Б─■ Windows desktop (Python server + React frontend + SQLite). System tray + auto-port + main-thread window fix. Build date: 2026-10-30.
+Download: reSpotIt-Windows-v1.2.zip (SHA256: CDEA1BF00B62E8C05D18748DBFF1390375C2FC6DEAC6FAFCB0DB5991D6CADED9)
 
