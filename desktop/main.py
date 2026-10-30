@@ -1,4 +1,9 @@
-"""Desktop launcher for reSpotIt (Windows / Linux)."""
+"""Desktop launcher for reSpotIt (Windows / Linux).
+
+Runs the FastAPI backend as a background service with a system-tray icon.
+The native window opens on launch; closing it hides to the tray (server keeps
+running). Use the tray menu to Show / Restart / Quit.
+"""
 
 import argparse
 import os
@@ -24,16 +29,17 @@ def data_dir() -> Path:
     return d
 
 
-def pick_port(requested: int) -> int:
-    s = socket.socket()
-    try:
-        s.bind(("127.0.0.1", requested))
-        return requested
-    except OSError:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-    finally:
-        s.close()
+def find_free_port(start: int, span: int = 20) -> int:
+    for p in range(start, start + span):
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", p))
+            return p
+        except OSError:
+            continue
+        finally:
+            s.close()
+    raise RuntimeError(f"No free port in range {start}-{start+span-1}")
 
 
 def wait_ready(port: int, timeout: float = 30.0) -> bool:
@@ -49,107 +55,163 @@ def wait_ready(port: int, timeout: float = 30.0) -> bool:
     return False
 
 
-def _main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--data-dir", type=str, default=None)
-    parser.add_argument("--no-window", action="store_true", help="run backend only")
-    args = parser.parse_args()
+class App:
+    def __init__(self, port: int, data: Path):
+        self.requested_port = port
+        self.data = data
+        self.port = None
+        self.server = None
+        self.thread = None
+        self.window = None
+        self.tray = None
+        self.running = False
 
-    # Redirect stdio in windowed (PyInstaller) mode so failures are logged.
-    if sys.stdout is None or sys.stderr is None:
-        ld = data_dir() / "logs"
-        ld.mkdir(parents=True, exist_ok=True)
-        _lf = open(ld / "app.log", "a", encoding="utf-8")
-        if sys.stdout is None:
-            sys.stdout = _lf
-        if sys.stderr is None:
-            sys.stderr = _lf
+    def _env_setup(self):
+        os.environ.setdefault("DATA_DIR", str(self.data))
+        os.environ.setdefault("IMAGES_DIR", str(self.data / "images"))
+        os.environ.setdefault("OUTPUT_CSV", str(self.data / "spotify_albums.csv"))
+        os.environ.setdefault("INPUT_CSV", str(self.data / "spotify_albums.csv"))
+        os.environ.setdefault("MIGRATIONS_DIR", _migrations_dir())
+        os.environ.setdefault("FRONTEND_DIST", _frontend_dist())
+        if not os.getenv("DATABASE_URL"):
+            os.environ["DATABASE_URL"] = f"sqlite:///{self.data / 'reSpotIt.db'}"
 
-    dd = Path(args.data_dir) if args.data_dir else data_dir()
-    os.environ.setdefault("DATA_DIR", str(dd))
-    os.environ.setdefault("IMAGES_DIR", str(dd / "images"))
-    os.environ.setdefault("OUTPUT_CSV", str(dd / "spotify_albums.csv"))
-    os.environ.setdefault("INPUT_CSV", str(dd / "spotify_albums.csv"))
-    os.environ.setdefault("MIGRATIONS_DIR", _migrations_dir())
-    os.environ.setdefault("FRONTEND_DIST", _frontend_dist())
+    def start_server(self):
+        if self.running:
+            return
+        import uvicorn
+        from api.main import app as fastapi_app
 
-    # OAuth requires a fixed port matching the registered redirect URI.
-    if args.port == DEFAULT_PORT:
+        self.port = find_free_port(self.requested_port)
+        if self.port != self.requested_port:
+            print(f"Port {self.requested_port} in use; using {self.port}. "
+                  f"OAuth (registered for {self.requested_port}) will not work on this port.")
+
+        self._env_setup()
+        config = uvicorn.Config(fastapi_app, host="127.0.0.1", port=self.port, log_level="info")
+        self.server = uvicorn.Server(config)
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
+        self.thread.start()
+        if not wait_ready(self.port):
+            print("Backend did not become ready in time.")
+            self.stop_server()
+            return False
+        self.running = True
+        print(f"reSpotIt running at http://127.0.0.1:{self.port}")
+        return True
+
+    def stop_server(self):
+        if not self.running:
+            return
+        if self.server:
+            self.server.should_exit = True
+        if self.thread:
+            self.thread.join(timeout=5)
+        self.running = False
+        self.server = None
+        self.thread = None
+        print("reSpotIt stopped.")
+
+    def restart_server(self):
+        self.stop_server()
+        self.start_server()
+        self._open_window()
+
+    def _open_window(self):
+        url = f"http://127.0.0.1:{self.port}"
         try:
-            _s = socket.socket()
-            _s.bind(("127.0.0.1", DEFAULT_PORT))
-            _s.close()
-        except OSError:
-            print(f"Port {DEFAULT_PORT} is in use. The Spotify OAuth redirect URI is registered for "
-                  f"http://127.0.0.1:{DEFAULT_PORT}/api/v1/auth/callback, so the app cannot start on "
-                  f"another port. Free port {DEFAULT_PORT} or pass --port <n> (OAuth will not work).")
-            sys.exit(1)
-    port = pick_port(args.port)
-    if port != args.port:
-        print(f"Port {args.port} in use; using {port}.")
+            import webview
+            if self.window is None:
+                self.window = webview.create_window("reSpotIt", url, width=1280, height=820)
+                webview.start(self._on_window_closed, debug=False)
+            else:
+                self.window.load_url(url)
+                self.window.show()
+        except Exception as e:
+            print(f"Native window unavailable ({e}); opening browser.")
+            webbrowser.open(url)
 
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        db_path = dd / "reSpotIt.db"
-        db_url = f"sqlite:///{db_path}"
-        os.environ["DATABASE_URL"] = db_url
+    def _on_window_closed(self):
+        # Hide to tray instead of quitting
+        if self.window:
+            try:
+                self.window.hide()
+            except Exception:
+                pass
 
-    import uvicorn
-    from api.main import app
+    def _quit(self, icon=None, item=None):
+        self.stop_server()
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
+        if self.window:
+            try:
+                self.window.destroy()
+            except Exception:
+                pass
+        sys.exit(0)
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
+    def _show(self, icon=None, item=None):
+        self._open_window()
 
-    if not wait_ready(port):
-        print("Backend did not become ready in time.")
-        server.should_exit = True
-        sys.exit(1)
+    def _restart(self, icon=None, item=None):
+        self.restart_server()
 
-    url = f"http://127.0.0.1:{port}"
-
-    if args.no_window:
-        print(f"reSpotIt running at {url}. Press Ctrl+C to stop.")
+    def run_tray(self):
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-        server.should_exit = True
-        return
+            import pystray
+            from PIL import Image, ImageDraw
+            # Build a simple icon
+            img = Image.new("RGB", (64, 64), (25, 20, 20))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse((16, 16, 48, 48), fill=(29, 185, 84))
+            menu = pystray.Menu(
+                pystray.MenuItem("Show reSpotIt", self._show, default=True),
+                pystray.MenuItem("Restart server", self._restart),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Quit", self._quit),
+            )
+            self.tray = pystray.Icon("reSpotIt", img, "reSpotIt", menu)
+            self.tray.run()
+        except Exception as e:
+            print(f"Tray unavailable ({e}); running in foreground.")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+            self._quit()
 
-    try:
-        import webview
-        window = webview.create_window("reSpotIt", url, width=1280, height=820)
-        webview.start()
-    except Exception as e:
-        print(f"Native window unavailable ({e}); opening browser.")
-        webbrowser.open(url)
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-
-    server.should_exit = True
-    thread.join(timeout=5)
-
-
-def main():
-    try:
-        _main()
-    except Exception:
-        import traceback
-        try:
-            ld = data_dir() / "logs"
+    def run(self, no_window=False):
+        # Redirect stdio in windowed mode
+        if sys.stdout is None or sys.stderr is None:
+            ld = self.data / "logs"
             ld.mkdir(parents=True, exist_ok=True)
-            with open(ld / "app.log", "a", encoding="utf-8") as f:
-                traceback.print_exc(file=f)
+            _lf = open(ld / "app.log", "a", encoding="utf-8")
+            if sys.stdout is None:
+                sys.stdout = _lf
+            if sys.stderr is None:
+                sys.stderr = _lf
+
+        try:
+            if not self.start_server():
+                sys.exit(1)
+            if not no_window:
+                # Open window in a separate thread so tray can run on main
+                threading.Thread(target=self._open_window, daemon=True).start()
+            self.run_tray()
         except Exception:
-            pass
-        raise
+            import traceback
+            try:
+                ld = self.data / "logs"
+                ld.mkdir(parents=True, exist_ok=True)
+                with open(ld / "app.log", "a", encoding="utf-8") as f:
+                    traceback.print_exc(file=f)
+            except Exception:
+                pass
+            raise
 
 
 def _migrations_dir() -> str:
@@ -173,6 +235,33 @@ def _frontend_dist() -> str:
         if c.is_dir():
             return str(c)
     return ""
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--no-window", action="store_true", help="run backend only")
+    parser.add_argument("--no-tray", action="store_true", help="quit when window closes")
+    args = parser.parse_args()
+
+    dd = Path(args.data_dir) if args.data_dir else data_dir()
+    app = App(args.port, dd)
+    if args.no_tray:
+        # simple mode: server runs while window is open
+        app._env_setup()
+        if not app.start_server():
+            sys.exit(1)
+        app._open_window()
+        # block until window closes
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        app.stop_server()
+    else:
+        app.run(no_window=args.no_window)
 
 
 if __name__ == "__main__":
