@@ -4,6 +4,7 @@ import {
   getWebPlaybackState,
   initWebPlayback,
   nextWebPlayback,
+  playUris,
   previousWebPlayback,
   seekWebPlayback,
   setWebPlaybackTokenGetter,
@@ -25,8 +26,12 @@ export function PlayerView({ ds, onToast }) {
       if (!token) throw new Error('Connect Spotify on this device first.')
       return token
     }
-    const data = await api.getPlayerToken()
-    return data.access_token
+    try {
+      const data = await api.getPlayerToken()
+      return data.access_token
+    } catch (e) {
+      throw new Error('Cannot reach the server for a playback token. Check the server URL in Settings (cellular/Wi-Fi).')
+    }
   }
 
   useEffect(() => {
@@ -144,6 +149,15 @@ export function PlayerView({ ds, onToast }) {
             {queue.slice(0, 20).map((item, index) => (
               <div key={`${item.uri}-${index}`} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #242424' }}>
                 <span className="font-mono text-[0.6rem] text-muted" style={{ width: 20, textAlign: 'right' }}>{index + 1}</span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => playUris([item.uri]).catch((e) => onToast?.(e?.message || 'Playback failed', false))}
+                  disabled={!playback.ready || !item.uri}
+                  title="Play this track"
+                  style={{ padding: '2px 6px', fontSize: '0.7rem' }}
+                >
+                  ▶
+                </button>
                 <div style={{ minWidth: 0 }}>
                   <div className="text-sm text-ink truncate">{item.name}</div>
                   <div className="font-mono text-[0.6rem] text-muted truncate">{(item.artists || []).map((a) => a.name).join(', ')}</div>

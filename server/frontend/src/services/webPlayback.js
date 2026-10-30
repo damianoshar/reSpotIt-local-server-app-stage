@@ -197,11 +197,32 @@ export async function toggleWebPlayback() {
 }
 
 export async function nextWebPlayback() {
-  await player?.nextTrack?.()
+  const token = await getToken()
+  const id = deviceId
+  const url = id
+    ? `https://api.spotify.com/v1/me/player/next?device_id=${encodeURIComponent(id)}`
+    : 'https://api.spotify.com/v1/me/player/next'
+  const response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok && response.status !== 204) {
+    const text = await response.text()
+    throw new Error(`Spotify next failed (${response.status}): ${text}`)
+  }
+  // also try SDK method as fallback
+  try { await player?.nextTrack?.() } catch { /* ignore */ }
 }
 
 export async function previousWebPlayback() {
-  await player?.previousTrack?.()
+  const token = await getToken()
+  const id = deviceId
+  const url = id
+    ? `https://api.spotify.com/v1/me/player/previous?device_id=${encodeURIComponent(id)}`
+    : 'https://api.spotify.com/v1/me/player/previous'
+  const response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok && response.status !== 204) {
+    const text = await response.text()
+    throw new Error(`Spotify previous failed (${response.status}): ${text}`)
+  }
+  try { await player?.previousTrack?.() } catch { /* ignore */ }
 }
 
 export async function seekWebPlayback(value) {
