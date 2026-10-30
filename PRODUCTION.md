@@ -29,4 +29,4 @@ Everything under this folder (`reSpotIt-local-server-app`) is considered **produ
 - History: no "Damianos" or personal emails in any commit.
 
 ## Owner
-damianoshar (harharidisd@gmail.com) — contact only, not stored in source.
+Project maintainer (contact via GitHub).
