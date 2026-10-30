@@ -1,0 +1,5 @@
+node_modules/
+dist/
+
+# npm run verify:local build artefacts
+.tmp-render/

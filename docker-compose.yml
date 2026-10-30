@@ -1,0 +1,73 @@
+services:
+
+  # ── 0. Postgres ───────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     spotify
+      POSTGRES_PASSWORD: spotify
+      POSTGRES_DB:       spotify
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      # Host 5433: the elixir tree's Postgres already owns host 5432.
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spotify"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 1. FastAPI — all backend functionality ────────────────────────────────
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.api
+    image: spotify-api
+    env_file: .env
+    environment:
+      DATABASE_URL:   postgresql://spotify:spotify@db:5432/spotify
+      OUTPUT_CSV:     /data/spotify_albums.csv
+      INPUT_CSV:      /data/spotify_albums.csv
+      IMAGES_DIR:     /data/images
+      MIGRATIONS_DIR: /app/migrations
+      REDIRECT_URI:   ${REDIRECT_URI:-http://127.0.0.1:8888/api/v1/auth/callback}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    ports:
+      - "8000:8000"   # API (direct access + dev)
+    volumes:
+      - ./data:/data
+      - ./server/api:/app/api                # live-reload in dev
+      - ./server/migrations:/app/migrations  # new migration files without rebuilds
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. React frontend — served via nginx ──────────────────────────────────
+  frontend:
+    build:
+      context: ./server/frontend
+      dockerfile: Dockerfile
+    image: spotify-frontend
+    ports:
+      - "8888:80"             # visit http://127.0.0.1:8888
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+

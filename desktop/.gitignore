@@ -1,0 +1,5 @@
+# Desktop build artifacts
+dist/
+build/
+*.spec.bak
+__pycache__/
