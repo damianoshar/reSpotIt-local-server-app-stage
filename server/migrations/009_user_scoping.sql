@@ -30,30 +30,8 @@ ALTER TABLE album_tracks       ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES 
 
 -- ── 2. Preserve the existing Spotify link for the phone owner ────────────────
 
-DO $$
-DECLARE
-    owner_id UUID;
-BEGIN
-    IF EXISTS (SELECT 1 FROM spotify_tokens) THEN
-        SELECT id INTO owner_id
-        FROM users
-        WHERE lower(email) = lower('owner@example.com');
-
-        IF owner_id IS NULL THEN
-            RAISE EXCEPTION
-                'Owner account owner@example.com not found; cannot preserve Spotify token';
-        END IF;
-
-        UPDATE spotify_tokens SET user_id = owner_id WHERE user_id IS NULL;
-
-        -- Keep one token row per user (the newest) if duplicates exist.
-        DELETE FROM spotify_tokens a
-        USING spotify_tokens b
-        WHERE a.user_id = b.user_id
-          AND a.id <> b.id
-          AND a.updated_at < b.updated_at;
-    END IF;
-END $$;
+-- Token preservation is handled by the application on first run; no
+-- owner-specific account is assumed here so the migration stays generic.
 
 -- ── 3. Clear the old global library/cache once (backup is external) ──────────
 
