@@ -8,3 +8,10 @@ server/frontend/dist/
 server/frontend/node_modules/
 __pycache__/
 *.pyc
+
+# Development documentation
+README.md
+*.md
+DEPLOYMENT-PLAN.md
+PRODUCTION.md
+
