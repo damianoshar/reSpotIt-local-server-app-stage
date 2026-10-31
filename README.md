@@ -68,3 +68,7 @@ Notes:
   (`server/frontend/src/components/PlayerView.jsx`); it requires Premium and the
   `streaming` scope. The separate WASM librespot browser experiment is not used
   here and remains blocked at Spotify storage-resolve RBAC.
+## Desktop env
+
+The desktop app loads a .env file from the data directory (%APPDATA%\reSpotIt\data\.env) or next to the executable. Set DATABASE_URL, JWT_SECRET, SPOTIFY_CLIENT_ID, etc. there. Values already in the environment take precedence.
+

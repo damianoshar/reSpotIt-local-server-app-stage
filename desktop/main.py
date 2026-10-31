@@ -30,6 +30,24 @@ def data_dir() -> Path:
     return d
 
 
+def load_env_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from a .env file into os.environ (only if not already set)."""
+    if not path.is_file():
+        return
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception:
+        pass
+
+
 def find_free_port(start: int, span: int = 20) -> int:
     for p in range(start, start + span):
         s = socket.socket()
@@ -68,6 +86,9 @@ class App:
         self.running = False
 
     def _env_setup(self):
+        # Load .env from data dir and app dir (if present) before applying defaults.
+        load_env_file(self.data / ".env")
+        load_env_file(Path(sys.argv[0]).resolve().parent / ".env")
         os.environ.setdefault("DATA_DIR", str(self.data))
         os.environ.setdefault("IMAGES_DIR", str(self.data / "images"))
         os.environ.setdefault("OUTPUT_CSV", str(self.data / "spotify_albums.csv"))
