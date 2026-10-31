@@ -1,5 +1,9 @@
 # reSpotIt — Python Project
 
+## About
+
+reSpotIt was built to fill gaps in Spotify's library management. It is an album-centric tool that lets you organize your library and playlists using rich filters, add entire artist discographies to your library or turn them into playlists, import album links from any website, and build queues from albums you are listening to right now. This is a work in progress — expect rough edges and things that may not work yet.
+
 Self-contained project cut from the general reSpotIt. Organised as:
 
 ```
