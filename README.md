@@ -85,3 +85,8 @@ docker compose up -d --build
 2. Run it. Data is stored in \%APPDATA%\\reSpotIt\data\.
 3. Set Spotify credentials in a \.env\ file in the data directory.
 
+
+## Player limitations
+
+- Browser playback uses Spotify's official Web Playback SDK. Requires Spotify Premium and the streaming scope.
+- No buffer/quality settings available in the Web Playback SDK.
