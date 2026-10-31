@@ -14,7 +14,7 @@ import { DataSourcePanel } from './DataSourceModal'
 import { readSyncPhotos, writeSyncPhotos, useSyncPhotos } from '../hooks/useSyncPhotos'
 import { useLocalSpotify } from '../hooks/useLocalSpotify'
 import { api } from '../api/client'
-import { DuplicatesDialog } from './DuplicatesDialog'
+import { SpotifyCredentialsSection } from './SpotifyCredentialsSection'
 import { queryAlbums } from '../services/localDatabase'
 import { findDuplicates } from '../utils/duplicateFinder'
 import {
@@ -237,6 +237,8 @@ export function SettingsView({
           )}
         </div>
       </section>
+
+      <SpotifyCredentialsSection />
 
       <DuplicatesDialog
         open={dupesOpen}
