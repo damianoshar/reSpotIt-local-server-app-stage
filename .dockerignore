@@ -1,0 +1,16 @@
+# Docker build context exclusions
+.git
+.vs
+__pycache__
+*.pyc
+node_modules
+dist
+build
+.data
+*.db
+.env
+data/images
+*.log
+desktop/dist
+desktop/build
+typescript/dist

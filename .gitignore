@@ -1,0 +1,12 @@
+﻿*.zip
+SHA256SUMS.txt
+desktop/dist/
+desktop/build/
+
+node_modules/
+server/frontend/dist/
+server/frontend/node_modules/
+__pycache__/
+*.pyc
+
+
