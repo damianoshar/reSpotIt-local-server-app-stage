@@ -1,6 +1,6 @@
-# Spotify Dashboard — Python Project
+# reSpotIt — Python Project
 
-Self-contained project cut from the general Spotify Dashboard. Organised as:
+Self-contained project cut from the general reSpotIt. Organised as:
 
 ```
 server/        Python backend (FastAPI) + its web frontend + Docker
@@ -68,3 +68,16 @@ Notes:
   (`server/frontend/src/components/PlayerView.jsx`); it requires Premium and the
   `streaming` scope. The separate WASM librespot browser experiment is not used
   here and remains blocked at Spotify storage-resolve RBAC.
+## Installation
+
+Download the latest desktop app from the [releases page](https://github.com/damianoshar/reSpotIt-local-server-app-stage/releases/tag/v0.1.0).
+
+### Docker
+\`\ash
+docker compose up -d --build
+\`\`n
+### Desktop App (Windows)
+1. Download the executable from the releases page.
+2. Run it. Data is stored in \%APPDATA%\\reSpotIt\data\.
+3. Set Spotify credentials in a \.env\ file in the data directory.
+
