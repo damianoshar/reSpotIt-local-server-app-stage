@@ -1,0 +1,44 @@
+﻿*.zip
+SHA256SUMS.txt
+desktop/dist/
+desktop/build/
+
+node_modules/
+server/frontend/dist/
+server/frontend/node_modules/
+__pycache__/
+*.pyc
+
+.env
+keycloak_env.txt
+
+# mkcert local CA + server cert (never commit)
+# Auto-generated on first run if missing; host ./certs/ is optional
+certs/
+
+# Full stack overlay (OpenWebUI/Keycloak/MCP) — see docker-compose.full.yml
+# These are NOT in this repo; copy from ../reSpotIt-local-server-app-clean-backup-2/
+OpenWebUI-stack/
+*.key
+*.crt
+ca-bundle.crt
+ca.srl
+
+# local dev launchers (may hold dev tokens)
+server/run_dev.py
+server/run_dev_https.py
+
+# local run logs
+server/frontend/vite.err
+server/frontend/vite.out
+server/uvicorn.err
+server/uvicorn.out
+server/uvicorn_https.err
+server/uvicorn_https.out
+
+# local databases and synced data
+server/*.db
+data/
+
+# Visual Studio
+.vs/
