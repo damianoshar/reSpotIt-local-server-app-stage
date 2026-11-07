@@ -21,6 +21,7 @@ from ..services.spotify_actions import (
     follow_artists_from_saved_albums, remove_saved_albums, save_saved_albums,
     search_spotify_catalog, get_artist_albums, get_spotify_albums,
     get_player_state, get_player_queue,
+    get_followed_artists, resolve_albums, resolve_artists,
 )
 from ..services.playlist_cache import (
     upsert_playlist, get_playlist_by_spotify, replace_tracks,
@@ -49,6 +50,13 @@ def spotify_status(user: User = Depends(get_current_user)):
 class AlbumSelection(BaseModel):
     album_ids: list[str]
 
+
+class ResolveAlbumsBody(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+
+
+class ResolveArtistsBody(BaseModel):
+    names: list[str] = Field(default_factory=list)
 class CreatePlaylistBody(BaseModel):
     name:            str
     description:     str = ""
@@ -632,6 +640,33 @@ def follow_artists_from_saved(user: User = Depends(get_current_user)):
     user_id = str(user.id)
     try:
         return follow_artists_from_saved_albums(_token(user_id))
+    except Exception as e:
+        _handle(e)
+
+
+@router.get("/spotify/followed-artists", summary="List the user's followed Spotify artists")
+def followed_artists(user: User = Depends(get_current_user)):
+    user_id = str(user.id)
+    try:
+        return {"artists": get_followed_artists(_token(user_id))}
+    except Exception as e:
+        _handle(e)
+
+
+@router.post("/spotify/resolve-albums", summary="Resolve artist+album pairs to Spotify albums")
+def resolve_albums_route(body: ResolveAlbumsBody, user: User = Depends(get_current_user)):
+    user_id = str(user.id)
+    try:
+        return resolve_albums(_token(user_id), body.items)
+    except Exception as e:
+        _handle(e)
+
+
+@router.post("/spotify/resolve-artists", summary="Resolve artist names to Spotify IDs + followed status")
+def resolve_artists_route(body: ResolveArtistsBody, user: User = Depends(get_current_user)):
+    user_id = str(user.id)
+    try:
+        return resolve_artists(_token(user_id), body.names)
     except Exception as e:
         _handle(e)
 

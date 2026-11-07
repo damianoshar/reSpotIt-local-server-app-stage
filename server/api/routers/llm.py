@@ -70,6 +70,11 @@ class LLMChatCreate(BaseModel):
     model: str | None = Field(default=None, max_length=512)
 
 
+class ExtractBody(BaseModel):
+    url: str | None = Field(default=None, max_length=2048)
+    text: str | None = Field(default=None, max_length=20000)
+
+
 def _contract_error(exc: llm_service.LLMError) -> ContractError:
     return ContractError(exc.status_code, exc.code, str(exc))
 
@@ -224,6 +229,44 @@ async def delete_chat(
         raise _chat_error(exc) from exc
     chat_session_service.clear_current_chat_id(db, str(user.id), chat_id)
     return {"data": {"deleted": True, "chat_id": chat_id}}
+
+
+@router.post("/extract-albums", summary="Extract albums from a page using AI")
+async def extract_albums(body: ExtractBody, user: User = Depends(get_current_user)):
+    text = ""
+    if body.url:
+        try:
+            text = await run_in_threadpool(llm_service.fetch_page_text, body.url)
+        except llm_service.LLMError as exc:
+            raise _contract_error(exc) from exc
+    if body.text:
+        text = (text + "\n" + body.text).strip() if text else body.text.strip()
+    if not text:
+        raise ContractError(422, "llm_empty_input", "Provide url or text.")
+    try:
+        data = await _with_user_token(user, llm_service.extract_albums, text)
+    except llm_service.LLMError as exc:
+        raise _contract_error(exc) from exc
+    return {"data": data}
+
+
+@router.post("/extract-concerts", summary="Extract concerts from a page using AI")
+async def extract_concerts(body: ExtractBody, user: User = Depends(get_current_user)):
+    text = ""
+    if body.url:
+        try:
+            text = await run_in_threadpool(llm_service.fetch_page_text, body.url)
+        except llm_service.LLMError as exc:
+            raise _contract_error(exc) from exc
+    if body.text:
+        text = (text + "\n" + body.text).strip() if text else body.text.strip()
+    if not text:
+        raise ContractError(422, "llm_empty_input", "Provide url or text.")
+    try:
+        data = await _with_user_token(user, llm_service.extract_concerts, text)
+    except llm_service.LLMError as exc:
+        raise _contract_error(exc) from exc
+    return {"data": data}
 
 
 @router.post("/chat", summary="Chat with the local model")

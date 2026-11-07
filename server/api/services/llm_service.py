@@ -334,3 +334,113 @@ def status(token: str | None = None) -> dict[str, Any]:
         result["error"] = str(exc)
     return result
 
+
+# ---------------------------------------------------------------------------
+# Phase 0 helpers: URL fetch + structured JSON extraction for AI URL scan
+# ---------------------------------------------------------------------------
+
+import json as _json
+import re as _re
+
+
+def fetch_page_text(url: str, *, max_chars: int = 12000) -> str:
+    """Fetch a URL and return cleaned plain text (tags stripped, truncated)."""
+    if not url or not str(url).strip():
+        raise LLMError("url is required")
+    try:
+        resp = requests.get(
+            str(url).strip(),
+            headers={"User-Agent": "reSpotIt/1.0 (+https://github.com/damianoshar/reSpotIt)"},
+            timeout=(CONNECT_TIMEOUT, 30.0),
+        )
+    except requests.RequestException as exc:
+        raise LLMUnavailable(f"Cannot fetch page: {exc}") from exc
+    if resp.status_code >= 400:
+        raise LLMUpstreamError(f"Page returned HTTP {resp.status_code}")
+    html = resp.text or ""
+    text = _re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=_re.S | _re.I)
+    text = _re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=_re.S | _re.I)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    text = _re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_chars:
+        text = text[:max_chars]
+    return text
+
+
+def _parse_json_object(text: str) -> dict:
+    if not text:
+        raise LLMUpstreamError("LLM returned empty content.")
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = _re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = _re.sub(r"\n?```$", "", cleaned).strip()
+    match = _re.search(r"\{.*\}", cleaned, _re.S)
+    if not match:
+        match = _re.search(r"\[.*\]", cleaned, _re.S)
+    if not match:
+        raise LLMUpstreamError("LLM did not return JSON.")
+    try:
+        data = _json.loads(match.group(0))
+    except (ValueError, TypeError) as exc:
+        raise LLMUpstreamError(f"LLM returned invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        data = {"items": data}
+    return data
+
+
+_ALBUMS_SYSTEM = (
+    "You are a data extractor. Given the text of a web page, extract every album "
+    "mentioned (artist + album title). Return ONLY valid JSON with this exact shape: "
+    '{"albums": [{"artist": "...", "album": "..."}]}. No prose, no markdown fences. '
+    "If none found, return {\"albums\": []}."
+)
+
+_CONCERTS_SYSTEM = (
+    "You are a data extractor. Given the text of a web page about concerts or "
+    "events, extract every concert. Return ONLY valid JSON with this exact shape: "
+    '{"concerts": [{"artist": "...", "date": "YYYY-MM-DD or empty", '
+    '"venue": "...", "url": "..."}]}. No prose, no markdown fences. '
+    "If none found, return {\"concerts\": []}."
+)
+
+
+def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024) -> dict:
+    """Run a chat with tools disabled and parse the reply as JSON."""
+    result = chat(
+        [{"role": "user", "content": user_text}],
+        system=system,
+        temperature=0.1,
+        max_tokens=max_tokens,
+        use_tools=False,
+        token=token,
+    )
+    content = result.get("content") or ""
+    return _parse_json_object(content)
+
+
+def extract_albums(text: str, *, token=None) -> dict:
+    data = extract_structured(_ALBUMS_SYSTEM, text, token=token, max_tokens=1024)
+    albums = data.get("albums") if isinstance(data.get("albums"), list) else []
+    out = []
+    for a in albums:
+        if isinstance(a, dict):
+            out.append({
+                "artist": str(a.get("artist") or "").strip(),
+                "album": str(a.get("album") or "").strip(),
+            })
+    return {"albums": out}
+
+
+def extract_concerts(text: str, *, token=None) -> dict:
+    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=1024)
+    concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []
+    out = []
+    for c in concerts:
+        if isinstance(c, dict):
+            out.append({
+                "artist": str(c.get("artist") or "").strip(),
+                "date": str(c.get("date") or "").strip(),
+                "venue": str(c.get("venue") or "").strip(),
+                "url": str(c.get("url") or "").strip(),
+            })
+    return {"concerts": out}

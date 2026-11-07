@@ -409,3 +409,139 @@ def get_player_queue(token: str) -> dict:
     if resp.status_code == 204:
         return {"queue": []}
     return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 helpers for AI URL scan features
+# ---------------------------------------------------------------------------
+
+def get_followed_artists(token: str) -> list[dict]:
+    """Return the user's followed Spotify artists (paginated)."""
+    artists: list[dict] = []
+    url = "/me/following"
+    params = {"type": "artist", "limit": 50}
+    while url:
+        data = _get(token, url, params=params)
+        container = (data.get("artists") or {}) if isinstance(data, dict) else {}
+        for artist in container.get("items") or []:
+            if not isinstance(artist, dict):
+                continue
+            images = artist.get("images") or []
+            artists.append({
+                "id": artist.get("id"),
+                "name": artist.get("name") or "Unknown artist",
+                "image_url": (images[0].get("url") if images else "") or "",
+                "genres": artist.get("genres") or [],
+                "followers": (artist.get("followers") or {}).get("total", 0),
+            })
+        url = container.get("next")
+        params = {}
+        if url and not isinstance(url, str):
+            url = None
+        if url and not url.startswith("http"):
+            url = f"{BASE}{url}"
+    return artists
+
+
+def _best_album_match(albums: list[dict], artist: str, album: str) -> dict | None:
+    artist_l = (artist or "").strip().lower()
+    album_l = (album or "").strip().lower()
+    # Prefer exact title + artist match.
+    for a in albums:
+        if not isinstance(a, dict):
+            continue
+        if (a.get("title") or "").strip().lower() == album_l and \
+           (artist_l == "" or artist_l in (a.get("artist") or "").strip().lower()):
+            return a
+    # Then exact title only.
+    for a in albums:
+        if not isinstance(a, dict):
+            continue
+        if (a.get("title") or "").strip().lower() == album_l:
+            return a
+    # Then first result whose artist matches.
+    for a in albums:
+        if not isinstance(a, dict):
+            continue
+        if artist_l and artist_l in (a.get("artist") or "").strip().lower():
+            return a
+    return albums[0] if albums and isinstance(albums[0], dict) else None
+
+
+def resolve_albums(token: str, items: list) -> dict:
+    """Resolve [{artist, album}] pairs to Spotify albums."""
+    resolved = []
+    unresolved = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        artist = str(item.get("artist") or "").strip()
+        album = str(item.get("album") or "").strip()
+        if not artist and not album:
+            continue
+        if artist and album:
+            query = f'album:"{album}" artist:"{artist}"'
+        elif album:
+            query = f'album:"{album}"'
+        else:
+            query = artist
+        try:
+            data = search_spotify_catalog(token, query, limit=5)
+        except Exception:
+            data = {"albums": []}
+        albums = (data or {}).get("albums") or []
+        match = _best_album_match(albums, artist, album)
+        if match:
+            resolved.append({
+                "artist": artist,
+                "album": album,
+                "spotify_id": match.get("id"),
+                "title": match.get("title") or album,
+                "artist_name": match.get("artist") or artist,
+                "year": match.get("year") or 0,
+                "image_url": match.get("image_url") or "",
+                "spotify_url": match.get("spotify_url") or "",
+            })
+        else:
+            unresolved.append({"artist": artist, "album": album})
+    return {"resolved": resolved, "unresolved": unresolved}
+
+
+def _best_artist_match(artists: list[dict], name: str) -> dict | None:
+    name_l = (name or "").strip().lower()
+    for a in artists:
+        if not isinstance(a, dict):
+            continue
+        if (a.get("name") or "").strip().lower() == name_l:
+            return a
+    return artists[0] if artists and isinstance(artists[0], dict) else None
+
+
+def resolve_artists(token: str, names: list[str]) -> dict:
+    """Resolve artist names to Spotify IDs and followed status."""
+    followed_ids = {a.get("id") for a in get_followed_artists(token) if a.get("id")}
+    resolved = []
+    unresolved = []
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        try:
+            data = search_spotify_catalog(token, name, limit=5)
+        except Exception:
+            data = {"artists": []}
+        artists = (data or {}).get("artists") or []
+        match = _best_artist_match(artists, name)
+        if match and match.get("id"):
+            aid = match.get("id")
+            resolved.append({
+                "name": name,
+                "spotify_id": aid,
+                "matched_name": match.get("name") or name,
+                "image_url": match.get("image_url") or "",
+                "genres": match.get("genres") or [],
+                "followed": aid in followed_ids,
+            })
+        else:
+            unresolved.append(name)
+    return {"resolved": resolved, "unresolved": unresolved}
