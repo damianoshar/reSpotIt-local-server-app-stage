@@ -407,8 +407,7 @@ _CONCERTS_SYSTEM = (
 def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024) -> dict:
     """Run a chat with tools disabled and parse the reply as JSON."""
     result = chat(
-        [{"role": "user", "content": user_text}],
-        system=system,
+        [{"role": "system", "content": system}, {"role": "user", "content": user_text}],
         temperature=0.1,
         max_tokens=max_tokens,
         use_tools=False,
