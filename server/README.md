@@ -114,7 +114,6 @@ service (or in the shell when running uvicorn natively):
 | `OPENWEBUI_MODEL` | first model Open WebUI lists | Optional model id override. |
 | `OPENWEBUI_TRUSTED_AUTH` | `false` | Exchange the signed-in user's email for a per-user Open WebUI JWT (trusted-header sign-in). Required for chat history. |
 | `OPENWEBUI_TRUSTED_HEADER` | `X-OWUI-Trusted-Email` | Header Open WebUI trusts for the email. Only enable on a private network. |
-| `LLM_TIMEOUT` | `180` | Read timeout in seconds. Large local models are slow. |
 
 Trusted-header auth must point at an instance that is **not** browser-facing:
 Open WebUI rejects password sign-in whenever `WEBUI_AUTH_TRUSTED_EMAIL_HEADER`

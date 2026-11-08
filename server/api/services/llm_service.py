@@ -8,7 +8,6 @@ Environment:
     OPENWEBUI_URL      Base URL (default http://localhost:3000)
     OPENWEBUI_API_KEY  Personal access token (sk-...). Unset = feature disabled.
     OPENWEBUI_MODEL    Optional model id. Default: first model Open WebUI lists.
-    LLM_TIMEOUT        Read timeout in seconds (default 180; 35B models are slow).
 
 The endpoints are additive: the frozen /api/v1 library contract is untouched.
 """
@@ -21,9 +20,9 @@ from . import mcp_service
 
 import requests
 
-DEFAULT_TIMEOUT = 180.0
 CONNECT_TIMEOUT = 5.0
 MODELS_TIMEOUT = 15.0
+DEFAULT_READ_TIMEOUT = 30.0
 
 
 class LLMError(RuntimeError):
@@ -78,13 +77,6 @@ def _api_key() -> str:
         return ""
 
 
-def _timeout() -> float:
-    try:
-        return max(10.0, float(os.getenv("LLM_TIMEOUT", "180")))
-    except ValueError:
-        return DEFAULT_TIMEOUT
-
-
 def is_configured(token: str | None = None) -> bool:
     return bool(token or _api_key())
 
@@ -114,7 +106,7 @@ def _request(
             url,
             headers=_headers(token),
             json=json_body,
-            timeout=timeout if timeout is not None else (CONNECT_TIMEOUT, _timeout()),
+            timeout=timeout if timeout is not None else (CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
         )
     except requests.Timeout as exc:
         raise LLMTimeout("The LLM did not answer in time.") from exc
