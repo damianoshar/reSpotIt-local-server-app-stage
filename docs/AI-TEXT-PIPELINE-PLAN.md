@@ -165,4 +165,45 @@ over `scan_sources`) is the only open item.
 
 ---
 
+## 6. Scan latency — measured budget and what to try
+
+A 10,566-char Bandsintown page on the local model, measured from llama.cpp
+timings in the API log (2026-11-09):
+
+| Stage | Speed | Cost on an 80-concert page |
+|---|---|---|
+| Prompt eval | ~104 tok/s (4,437 tokens) | ~43 s |
+| **Generation** | **~9.5 tok/s (2,677 tokens)** | **~282 s** |
+| Total | | ~325 s (observed scans: 352 / 579 / 750 s) |
+
+**Generation dominates.** Every saved output token is worth ~0.1 s. Rows used to
+cost ~30 tokens each (four named keys, `"url"` always empty).
+
+### Applied
+
+| # | Change | Effect |
+|---|---|---|
+| 1 | Compact rows: `{"concerts": [["artist","date","venue"], ...]}` instead of objects, no `url` key | ~12 tokens/row instead of ~30 — roughly 2.5× faster generation |
+| 2 | Legacy object rows still parse (mixed answers, older prompts) | no regression |
+| 3 | Retry nudges appended to the **user** message, never the system prompt | llama.cpp reuses the prompt cache by prefix, so a retry no longer re-evaluates the whole page (was ~4,400 tokens ≈ 43 s + full generation) |
+| 4 | Empty/undated answers retried once (`_looks_like_events` gate) | rescues "Found 0 concert(s)" on a page full of events; live-verified: retry turned `{"concerts": []}` into **87 concerts** |
+| 5 | `fail_orphaned_scans()` at startup | a restart no longer leaves clients polling a scan that no worker will finish |
+
+### Still on the table (not applied)
+
+| # | Change | Expected | Notes |
+|---|---|---|---|
+| 6 | Grammar-constrained JSON (GBNF / `response_format` schema) | 10-20% + no invalid-JSON retries | forces the shape, drops rambling |
+| 7 | `-np 2..4` on llama-server | ~2-3× wall time when several scans run | currently `-np 1`, so concurrent scans serialize (two scans took 306 s and 413 s back to back) |
+| 8 | Smaller model (4B) or lighter quant for extraction | ~2-3× | GPU is a 6 GB RTX 3060 at 100%; current flags push MoE experts to CPU (`-ot blk.18..40 exps=CPU`) |
+| 9 | Deterministic regex pre-parse for regular listings (Bandsintown pattern: artist / `Fri, Nov 13 • 9 PM` / venue) | ~100% for those pages | LLM only for messy pages or name normalisation |
+| 10 | Trim nav/footer boilerplate before extraction | ~10-20 s prompt eval, fewer empty answers | the source includes "With over 100 million fans..." promo text |
+| 11 | Cap `max_tokens` per chunk adaptively | small | 4,096 is generous but generation stops at end-of-answer anyway |
+| 12 | Speculative decoding / draft model | 1.5-2× | needs a matching draft model |
+
+Measure with `LLM_TRACE=1` in `.env` and the `tokens_predicted` /
+`predicted_per_second` fields the llama.cpp server returns in each completion.
+
+---
+
 *See also: `docs/STORAGE-POLICY.md`, `EXPERIMENTAL_FEATURES.md`, Kanso board 11 cards 565 and 507.*

@@ -409,6 +409,50 @@ def test_run_scan_retries_undated_rows(Session, user):
         assert row.items[0]["date"] == "2026-11-13"
 
 
+# ── Compact output + prompt-cache-friendly retries ────────────────────────────
+
+def test_extract_concerts_parses_compact_arrays():
+    """Rows come back as [artist, date, venue] arrays to cut generated tokens."""
+    from api.services import llm_service
+
+    with patch("api.services.llm_service.extract_structured",
+               return_value={"concerts": [
+                   ["Sólstafir", "2026-11-13", "Eightball Club"],
+                   ["Kovacs"],
+                   {"artist": "Whiplash", "date": "", "venue": "Soul", "url": "u"},
+               ]}) as es:
+        out = llm_service.extract_concerts("page text")
+
+    rows = out["concerts"]
+    assert rows[0] == {"artist": "Sólstafir", "date": "2026-11-13",
+                       "venue": "Eightball Club", "url": ""}
+    assert rows[1]["artist"] == "Kovacs" and rows[1]["date"] == "" and rows[1]["venue"] == ""
+    # Legacy object rows (and a url) still parse.
+    assert rows[2]["url"] == "u"
+
+    system = es.call_args.args[0]
+    assert "ARRAY" in system and '"url"' not in system
+
+
+def test_extract_concerts_nudge_keeps_system_prompt_cached():
+    """Retries must not rewrite the system prompt, or llama.cpp re-reads the page."""
+    from api.services import llm_service
+
+    base = llm_service._CONCERTS_SYSTEM
+    for mode in ("empty", "dates"):
+        with patch("api.services.llm_service.extract_structured",
+                   return_value={"concerts": []}) as es:
+            llm_service.extract_concerts("PAGE", mode=mode)
+        assert es.call_args.args[0] == base, "system prompt changed; cache lost"
+        prompt = es.call_args.args[1]
+        assert prompt.startswith("PAGE") and len(prompt) > len("PAGE")
+
+    with patch("api.services.llm_service.extract_structured",
+               return_value={"concerts": []}) as es:
+        llm_service.extract_concerts("PAGE")
+    assert es.call_args.args[1] == "PAGE", "no-mode call must pass the text unchanged"
+
+
 def test_fail_orphaned_scans_marks_running_as_error(Session, user):
     """Scans left running by a restart must not hang clients on /latest."""
     with Session() as db:

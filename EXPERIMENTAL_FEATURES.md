@@ -305,6 +305,13 @@ phases:
 RAG is deliberately not used for extraction: top-k retrieval drops events when
 the query is generic. Chunked extraction preserves recall.
 
+**Scan latency:** generation (~9.5 tok/s on the local 9B) is ~80% of a scan, not
+parsing. Rows were cut to compact `[artist, date, venue]` arrays (no `url`), and
+retry nudges moved to the user message so the llama.cpp prompt cache survives.
+Remaining options (grammar-constrained JSON, `-np`, smaller model, regex
+pre-parse, boilerplate trimming) are listed in
+`docs/AI-TEXT-PIPELINE-PLAN.md` §6.
+
 ### LLM prompt/response visibility (implemented)
 
 - **Route A — model server:** `llama-server.exe --verbose --log-prefix

@@ -426,32 +426,36 @@ _ALBUMS_SYSTEM = (
 _CONCERTS_SYSTEM = (
     "You are a data extractor. Given the text of a web page about concerts or "
     "events, extract every concert. Return ONLY valid JSON with this exact shape: "
-    '{"concerts": [{"artist": "...", "date": "YYYY-MM-DD or empty", '
-    '"venue": "...", "url": "..."}]}. No prose, no markdown fences. '
+    '{"concerts": [["artist", "YYYY-MM-DD or empty", "venue"], ...]}. '
+    "Each concert is a 3-item ARRAY, not an object: artist first, then date, "
+    "then venue. Never add other keys or a url. Keep the JSON compact. "
+    "No prose, no markdown fences. "
     "If none found, return {\"concerts\": []}."
 )
 
 
 _STRICTER_SUFFIX = (
     "\n\nIMPORTANT: Your previous answer was not valid JSON. "
-    "Reply with ONLY a single JSON object matching the requested shape. "
+    "Reply with ONLY a single JSON object matching the requested shape "
+    '(for concerts: {"concerts": [["artist", "date", "venue"], ...]}). '
     "No prose, no markdown fences, no extra text."
 )
 
-# Nudges for degenerate answers from a small local model. The caller retries
-# with these when the first answer is empty (or entirely undated) even though
-# the source text plainly contains dated events.
+# Nudges for degenerate answers from a small local model. They are appended to
+# the *user* message, never to the system prompt: llama.cpp reuses the prompt
+# cache by prefix, so rewriting the system prompt would re-evaluate the whole
+# page (seconds -> minutes) on every retry.
 _CONCERT_NUDGE_EMPTY = (
-    "\n\nIMPORTANT: this text lists real events with dates. Extract every one "
-    "of them as a separate object. Never return an empty list when dated "
-    "events are present."
+    "\n\n---\n\nIMPORTANT: this text lists real events with dates. Extract every "
+    "one of them as a separate [artist, date, venue] array. Never return an "
+    "empty list when dated events are present."
 )
 
 _CONCERT_NUDGE_DATES = (
-    "\n\nIMPORTANT: every event in this text has a date next to it. Fill the "
-    '"date" field for every object as YYYY-MM-DD. When the year is missing, '
-    "infer the nearest upcoming year from the page context. Never leave "
-    '"date" empty when the text shows one.'
+    "\n\n---\n\nIMPORTANT: every event in this text has a date next to it. Put "
+    "the date in slot 2 of every array as YYYY-MM-DD. When the year is missing, "
+    "infer the nearest upcoming year from the page context. Never leave the "
+    "date empty when the text shows one."
 )
 
 
@@ -521,20 +525,35 @@ def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = 
     when it returned rows without any date.
     """
     system = _CONCERTS_SYSTEM
+    prompt = text
+    # The nudge goes on the user message so the cached system+page prefix
+    # survives the retry (llama.cpp reuses the prompt cache by prefix).
     if mode == "empty":
-        system += _CONCERT_NUDGE_EMPTY
+        prompt = text + _CONCERT_NUDGE_EMPTY
     elif mode == "dates":
-        system += _CONCERT_NUDGE_DATES
-    data = extract_structured(system, text, token=token, max_tokens=4096,
+        prompt = text + _CONCERT_NUDGE_DATES
+    data = extract_structured(system, prompt, token=token, max_tokens=4096,
                               timeout=timeout)
     concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []
     out = []
     for c in concerts:
         if isinstance(c, dict):
+            # Legacy object shape (and anything the model improvises).
             out.append({
                 "artist": str(c.get("artist") or "").strip(),
                 "date": str(c.get("date") or "").strip(),
                 "venue": str(c.get("venue") or "").strip(),
                 "url": str(c.get("url") or "").strip(),
+            })
+        elif isinstance(c, (list, tuple)):
+            # Compact [artist, date, venue] row: far fewer generated tokens
+            # (~12 vs ~30 per concert), which is the scan's real bottleneck.
+            vals = [str(v).strip() if v is not None else "" for v in c]
+            vals += [""] * (3 - len(vals))
+            out.append({
+                "artist": vals[0],
+                "date": vals[1],
+                "venue": vals[2],
+                "url": "",
             })
     return {"concerts": out}
