@@ -383,7 +383,8 @@ def render_env(values: dict[str, str]) -> str:
         "WEBUI_AUTH", "DEFAULT_USER_ROLE", "WEBUI_SECRET_KEY",
     ])
     lines += block("Spotify MCP", [
-        "MCP_API_KEY",
+        "MCP_API_KEY", "SPOTIFY_MCP_URL", "SPOTIFY_MCP_TOKEN",
+        "MCP_TOOLS", "RESPOTIT_MCP_TOOLS",
     ])
     lines += block("reSpotIt MCP service account", [
         "RESPOTIT_MCP_EMAIL", "RESPOTIT_MCP_PASSWORD", "RESPOTIT_MCP_USER_ID",
@@ -404,6 +405,7 @@ def render_env(values: dict[str, str]) -> str:
 
 
 def fresh_env_values(secret: str) -> dict[str, str]:
+    mcp_key = generate_token()
     return {
         "REDIRECT_URI": "https://127.0.0.1:8000/api/v1/auth/callback",
         "PUBLIC_BASE_URL": "https://127.0.0.1:8000",
@@ -436,7 +438,11 @@ def fresh_env_values(secret: str) -> dict[str, str]:
         "WEBUI_AUTH": "true",
         "DEFAULT_USER_ROLE": "user",
         "WEBUI_SECRET_KEY": generate_hex(),
-        "MCP_API_KEY": generate_token(),
+        "MCP_API_KEY": mcp_key,
+        "SPOTIFY_MCP_URL": "http://spotify-mcp:8000/mcp",
+        "SPOTIFY_MCP_TOKEN": mcp_key,
+        "MCP_TOOLS": "all",
+        "RESPOTIT_MCP_TOOLS": "all",
         "RESPOTIT_MCP_EMAIL": "mcp-service@respotit.local",
         "RESPOTIT_MCP_PASSWORD": generate_token(),
         "RESPOTIT_MCP_USER_ID": "",
@@ -491,7 +497,25 @@ def ensure_env() -> None:
         if not current or current == "change-me":
             updates[key] = generator()
 
+    # Enable every MCP tool by default (Spotify playback + reSpotIt library).
+    # The curated defaults intentionally hide destructive tools; "all" opts in.
+    for key in ("MCP_TOOLS", "RESPOTIT_MCP_TOOLS"):
+        if not values.get(key, "").strip():
+            updates[key] = "all"
+
+    # Spotify MCP server connection (container-to-container). The token is the
+    # same as MCP_API_KEY (the service uses it as SPOTIFY_MCP_HTTP_TOKEN).
+    if not values.get("SPOTIFY_MCP_URL", "").strip():
+        updates["SPOTIFY_MCP_URL"] = "http://spotify-mcp:8000/mcp"
+    if not values.get("SPOTIFY_MCP_TOKEN", "").strip():
+        inherited = values.get("MCP_API_KEY", "").strip()
+        if inherited:
+            updates["SPOTIFY_MCP_TOKEN"] = inherited
+
     # The backup workspace is the canonical source for the Spotify app id and
+    # the local certs.  An older one-click generated an .env with empty
+    # SPOTIFY_CLIENT_ID, which makes token refresh fail with HTTP 400.  Fill
+    # only missing values; never overwrite what the user already set.
     # the local certs.  An older one-click generated an .env with empty
     # SPOTIFY_CLIENT_ID, which makes token refresh fail with HTTP 400.  Fill
     # only missing values; never overwrite what the user already set.
