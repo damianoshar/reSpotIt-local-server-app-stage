@@ -143,7 +143,7 @@ def test_run_scan_stores_items_and_streams_progress(Session, user):
          patch("api.services.llm_service.extract_concerts", return_value={"concerts": [
              {"artist": "Radiohead", "date": "2026-06-01", "venue": "O2", "url": "https://x/1"},
              {"artist": "---", "date": "", "venue": "", "url": ""},
-         ]}), \
+         ]}) as extract, \
          patch("api.services.openwebui_service.get_user_token", return_value="tok"), \
          patch("api.services.openwebui_service.create_chat", return_value={"id": "chat-1"}), \
          patch("api.services.openwebui_service.append_exchange",
@@ -151,6 +151,8 @@ def test_run_scan_stores_items_and_streams_progress(Session, user):
         concert_scan_service.run_scan(scan.id, user[0], "https://example.com/concerts", None)
 
     fetch.assert_called_once()
+    # The worker waits far longer than an interactive call for a slow local model.
+    assert extract.call_args.kwargs.get("timeout") == concert_scan_service.SCAN_LLM_TIMEOUT
     with Session() as db:
         row = concert_scan_service.get_scan(db, user[0], scan.id)
         assert row.status == "ready" and row.stage == "done"

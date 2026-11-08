@@ -188,6 +188,7 @@ def chat(
     use_tools: bool = True,
     tool_rounds: int = 4,
     token: str | None = None,
+    timeout: tuple[float, float] | float | None = None,
 ) -> dict[str, Any]:
     """Send a non-streaming chat completion through Open WebUI.
 
@@ -221,7 +222,8 @@ def chat(
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
-        data = _request("POST", "/api/chat/completions", json_body=body, token=token)
+        data = _request("POST", "/api/chat/completions", json_body=body, token=token,
+                        timeout=timeout)
 
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -281,7 +283,8 @@ def chat(
         "max_tokens": max_tokens,
         "reasoning_effort": "none",
     }
-    data = _request("POST", "/api/chat/completions", json_body=body, token=token)
+    data = _request("POST", "/api/chat/completions", json_body=body, token=token,
+                    timeout=timeout)
     choices = data.get("choices")
     choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
     message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
@@ -403,12 +406,16 @@ _STRICTER_SUFFIX = (
 )
 
 
-def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024) -> dict:
+def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024,
+                       timeout: tuple[float, float] | float | None = None) -> dict:
     """Run a chat with tools disabled and parse the reply as JSON.
 
     Retries once with a stricter prompt if the first attempt does not yield
     parseable JSON (per the plan's edge case). On the second failure the raw
     content is included in the error so the caller can surface it.
+
+    ``timeout`` overrides the request read timeout; background callers (the
+    concert scan) pass a long one because a local model can take minutes.
     """
     result = chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user_text}],
@@ -416,6 +423,7 @@ def extract_structured(system: str, user_text: str, *, token=None, max_tokens: i
         max_tokens=max_tokens,
         use_tools=False,
         token=token,
+        timeout=timeout,
     )
     content = result.get("content") or ""
     try:
@@ -431,6 +439,7 @@ def extract_structured(system: str, user_text: str, *, token=None, max_tokens: i
         max_tokens=max_tokens,
         use_tools=False,
         token=token,
+        timeout=timeout,
     )
     retry_content = retry_result.get("content") or ""
     try:
@@ -455,8 +464,9 @@ def extract_albums(text: str, *, token=None) -> dict:
     return {"albums": out}
 
 
-def extract_concerts(text: str, *, token=None) -> dict:
-    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=4096)
+def extract_concerts(text: str, *, token=None, timeout=None) -> dict:
+    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=4096,
+                              timeout=timeout)
     concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []
     out = []
     for c in concerts:

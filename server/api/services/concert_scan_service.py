@@ -23,6 +23,10 @@ from ..models import ConcertScan, User
 
 logger = logging.getLogger("concert_scans")
 
+# The scan already returned 202 to the client, so the worker can wait much
+# longer than an interactive call: a local model can take minutes to answer.
+SCAN_LLM_TIMEOUT = (5.0, 900.0)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -199,7 +203,8 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
             scan.updated_at = _utcnow()
             db.commit()
 
-            data = llm_service.extract_concerts(body_text, token=chatter.token)
+            data = llm_service.extract_concerts(body_text, token=chatter.token,
+                                                timeout=SCAN_LLM_TIMEOUT)
             items = _normalise(data)
 
             scan.items = items
