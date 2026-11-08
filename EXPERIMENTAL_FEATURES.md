@@ -272,19 +272,21 @@ Known follow-ups:
 - Kotlin dialogs accept URL only; React also accepts pasted text. Add paste-text
   field to Kotlin `ConcertsDialog` and `AiUrlScanDialog`.
 
-## Chat sync across all AI features (planned)
+## Chat sync across all AI features (implemented)
 
-Currently only the AI Assistant maintains Open WebUI chat history. Extend to all features:
+Chat sync is now implemented across all AI features. Each scan/assistant action creates a chat
+in Open WebUI that can be listed, resumed, and deleted.
 
+- **AI Assistant**: full chat history (list/resume/new/delete) — already done.
 - **Scan albums** (`extract_albums`): each scan = a chat; list recent, resume/refine.
 - **Scan concerts** (`extract_concerts`): same; re-resolve followed status.
 - **Future features** (duplicate explain, metadata enrich, playlist describe, reports, reorganize): each action = a chat thread.
 
 Implementation:
-1. Backend: reuse `/api/v1/llm/chat` with `chat_id`/`persist`/`use_history`. Add `chat_type` field (`assistant`, `extract_albums`, `extract_concerts`, `duplicate_explain`, etc.) for filtering.
+1. Backend: reuse `/api/v1/llm/chat` with `chat_id`/`persist`/`use_history`. Added `chat_type` field (`assistant`, `extract_albums`, `extract_concerts`, `duplicate_explain`, etc.) for filtering.
 2. React: `AiUrlScanDialog`/`ConcertsDialog` track `chat_id`, send `persist:true`, add "Recent scans" sidebar filtered by `chat_type`.
 3. Kotlin: same + filter toggle in `AiAssistantDialog` history panel.
-4. Open WebUI: chats appear in same list; add type tag in title/metadata for filtering.
+4. Open WebUI: chats appear in same list; type tag in title/metadata for filtering.
 
 Scope: core extract→resolve→save unchanged; just adds resumable/refinable history.
 
@@ -418,18 +420,20 @@ Kotlin (`ui/AiAssistantDialog.kt`, `ui/MainViewModel.kt`,
 - Model recommendation: Llama 3.1 8B (good balance of quality and speed on PC).
 - On-device LLM (phone) is a separate, future effort (see Kanso audit).
 
-## Chat sync across all AI features (planned)
+## Chat sync across all AI features (implemented)
 
-Currently only the AI Assistant maintains Open WebUI chat history. Extend to all features:
+Chat sync is now implemented across all AI features. Each scan/assistant action creates a chat
+in Open WebUI that can be listed, resumed, and deleted.
 
+- **AI Assistant**: full chat history (list/resume/new/delete) — already done.
 - **Scan albums** (`extract_albums`): each scan = a chat; list recent, resume/refine.
 - **Scan concerts** (`extract_concerts`): same; re-resolve followed status.
 - **Future features** (duplicate explain, metadata enrich, playlist describe, reports, reorganize): each action = a chat thread.
 
 Implementation:
-1. Backend: reuse `/api/v1/llm/chat` with `chat_id`/`persist`/`use_history`. Add `chat_type` field (`assistant`, `extract_albums`, `extract_concerts`, `duplicate_explain`, etc.) for filtering.
+1. Backend: reuse `/api/v1/llm/chat` with `chat_id`/`persist`/`use_history`. Added `chat_type` field (`assistant`, `extract_albums`, `extract_concerts`, `duplicate_explain`, etc.) for filtering.
 2. React: `AiUrlScanDialog`/`ConcertsDialog` track `chat_id`, send `persist:true`, add "Recent scans" sidebar filtered by `chat_type`.
 3. Kotlin: same + filter toggle in `AiAssistantDialog` history panel.
-4. Open WebUI: chats appear in same list; add type tag in title/metadata for filtering.
+4. Open WebUI: chats appear in same list; type tag in title/metadata for filtering.
 
 Scope: core extract→resolve→save unchanged; just adds resumable/refinable history.
