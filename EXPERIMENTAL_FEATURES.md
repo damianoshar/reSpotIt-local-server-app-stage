@@ -118,6 +118,13 @@ open-webui:
 - [x] Chat history persistence + context (Phase 5/6, API)
 - [x] Web AI chat UI: history sidebar, resume, new/delete (Phase 7)
 - [x] Android AI chat UI (React and Kotlin clients)
+- [x] LLM prompt/response visibility (llama-server verbose log + `LLM_TRACE`)
+- [ ] AI scan source persistence (`scan_sources`, migration 015)
+- [ ] Chunked map-reduce extraction (raise the 6k/20k caps)
+- [ ] Large-input file upload for scans
+- [ ] Open WebUI ↔ MinIO S3 wiring
+- [ ] Open WebUI ↔ Redis websocket wiring
+- [ ] Optional RAG source library + Q&A
 
 ## Keycloak OIDC (Phase 3 + 4)
 
@@ -271,6 +278,40 @@ Known follow-ups:
   correct json" on some pages.
 - Kotlin dialogs accept URL only; React also accepts pasted text. Add paste-text
   field to Kotlin `ConcertsDialog` and `AiUrlScanDialog`.
+
+## AI text pipeline: source archive + chunked extraction (planned)
+
+Full plan: `docs/AI-TEXT-PIPELINE-PLAN.md` (Kanso card 565).
+
+The scan path currently loses data: URL text is truncated to 6,000 chars, pasted
+text is capped at 20,000, and `create_scan` keeps only `source[:120]`. Fix in
+phases:
+
+- [ ] **Source persistence** — migration `015` + `scan_sources` (full text,
+      `sha256`, `chars`, kind), `source_id`/`chunk_count` on `concert_scans`.
+- [ ] **Chunked map-reduce** — overlapping chunks, per-chunk extraction, merge +
+      dedupe on `(artist, date, venue)`, per-chunk progress; raise caps.
+- [ ] **File upload** — `POST /api/v1/concert-scans/upload` (multipart), attach
+      from React/Kotlin.
+- [ ] **MinIO S3 wiring** — restore `STORAGE_PROVIDER=s3` + `S3_*` on both
+      Open WebUI services; env-drive MinIO credentials.
+- [ ] **Redis websocket wiring** — restore `WEBSOCKET_MANAGER=redis` +
+      `WEBSOCKET_REDIS_URL` on both Open WebUI services.
+- [ ] **Optional RAG Q&A** — index `scan_sources` into the existing Chroma
+      (`all-MiniLM-L6-v2`) for a cross-source "ask my sources" feature with
+      citations. Retrieval is only for Q&A, *not* for extraction.
+
+RAG is deliberately not used for extraction: top-k retrieval drops events when
+the query is generic. Chunked extraction preserves recall.
+
+### LLM prompt/response visibility (implemented)
+
+- **Route A — model server:** `llama-server.exe --verbose --log-prefix
+  --log-timestamps --log-file D:\huggingface\hub\llama-server.log` logs the
+  rendered prompt and raw output.
+- **Route B — app:** `LLM_TRACE=1` on the `api` service logs the exact
+  `messages` array and response (`llm_service._trace`). Committed `586035c`.
+- Both contain user text: keep local, don't commit, disable when done.
 
 ## Chat sync across all AI features (implemented)
 

@@ -142,6 +142,8 @@ This adds:
 - Spotify MCP at 127.0.0.1:8090
 - reSpotIt API through nginx at https://localhost/respotit/
 
+> **MinIO / Redis status:** both containers run, but Open WebUI is **not yet wired** to them — no `STORAGE_PROVIDER=s3`/`S3_*` (uploads use local disk) and no `WEBSOCKET_MANAGER=redis` (single-process websockets). Restoring that wiring is tracked in `docs/AI-TEXT-PIPELINE-PLAN.md` (Phases 4–5, Kanso card 565).
+
 ### Full-stack troubleshooting
 
 | Symptom | Cause | One-click fix |
@@ -179,8 +181,8 @@ docker compose -f docker-compose.yml -f docker-compose.full.yml up -d
 python scripts/bootstrap_full_stack.py
 ```
 
-- Data: `./data` + Postgres volume `pg_data` (back up both)
-- Full stack adds: `minio-data`, `open-webui-data`, `redis-data`, `pipelines`, `keycloak-db-data`, `openwebui-db-data`
+- Data: everything now lives under `./docker-data/` (no named volumes). Back up `./data` and `./docker-data/`.
+- Full stack bind-mounts: `./docker-data/postgres`, `./docker-data/minio`, `./docker-data/open-webui`, `./docker-data/redis`, `./docker-data/pipelines`, `./docker-data/keycloak-db`, `./docker-data/openwebui-db`
 
 ---
 

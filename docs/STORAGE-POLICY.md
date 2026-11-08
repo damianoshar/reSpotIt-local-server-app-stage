@@ -22,6 +22,7 @@
 | **Concerts** | **Server** | SQLite / Room | ✅ `/concerts` | shipped (Phase B–D) |
 | **Hidden duplicates** | **Server** | Preferences / `dedupe_prefs` | ✅ `/albums/hidden` | shipped (Phase B–D) |
 | LLM chat sessions | **Server** | — | ✅ | keep |
+| AI scan source text (paste/URL/file) | **Server** | — | ⏳ planned (`scan_sources`, migration 015) | persist full text + `sha256`; see §8 |
 | Server-side Spotify link / followed artists | **Server** | — | ✅ | keep |
 | Queue playlist ref | **Device-only** | `QueuePlaylistStore` | — | never sync |
 | Backup settings, server URL, mode, autohide, playback tuning, librespot keys | **Device-only** | Preferences / prefs | — | never sync |
@@ -105,5 +106,27 @@
 
 ---
 
+## 8. AI scan source archive (planned — migration `015`)
+
+The AI scan path currently discards its input: `create_scan` keeps only
+`source[:120]`, URL text is truncated to 6,000 chars, and pasted text is capped
+at 20,000. That makes scans impossible to re-run or audit.
+
+Target: a **server-canonical, user-scoped** `scan_sources` table holding the
+full source text, its SHA-256, character count, kind (`text`/`url`/`file`) and
+`source_url`. `concert_scans` gains nullable `source_id` and `chunk_count`.
+The existing short `source` preview stays for UI compatibility.
+
+| Datum | Owner | Store | Notes |
+|---|---|---|---|
+| Full scan source text | **Server** | `scan_sources.content` | user-scoped, FK CASCADE; retention-swept |
+| Source hash / size | **Server** | `scan_sources.sha256`, `.chars` | integrity + dedupe |
+| Chunk count / progress | **Server** | `concert_scans.chunk_count`, `.stage` | per-chunk progress |
+
+Chunked map-reduce extraction (not RAG) reads from the archive. RAG is reserved
+for an optional cross-source Q&A feature. See `docs/AI-TEXT-PIPELINE-PLAN.md`.
+
+---
+
 *Last updated: 2026-11-08*  
-*See Kanso board 11, card 507 for implementation tracking.*
+*See Kanso board 11, card 507 for implementation tracking; card 565 for the text pipeline.*
