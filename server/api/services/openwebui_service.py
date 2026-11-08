@@ -275,8 +275,11 @@ def _chat_request(
         raise OpenWebUIError("Open WebUI returned non-JSON chat data.") from exc
 
 
-def list_chats(token: str | None, limit: int = 50) -> list[dict[str, Any]]:
-    data = _chat_request("GET", "/api/v1/chats/", token)
+def list_chats(token: str | None, limit: int = 50, chat_type: str | None = None) -> list[dict[str, Any]]:
+    path = "/api/v1/chats/"
+    if chat_type:
+        path += f"?chat_type={chat_type}"
+    data = _chat_request("GET", path, token)
     rows = data if isinstance(data, list) else []
     return [row for row in rows if isinstance(row, dict)][: max(1, limit)]
 
@@ -293,6 +296,7 @@ def create_chat(
     *,
     title: str = "New Chat",
     model: str | None = None,
+    chat_type: str | None = None,
 ) -> dict[str, Any]:
     chat = {
         "title": title,
@@ -303,6 +307,8 @@ def create_chat(
         "tags": [],
         "files": [],
     }
+    if chat_type:
+        chat["chat_type"] = chat_type
     data = _chat_request("POST", "/api/v1/chats/new", token, json_body={"chat": chat})
     if not isinstance(data, dict) or not data.get("id"):
         raise OpenWebUIError("Open WebUI did not return the created chat.")

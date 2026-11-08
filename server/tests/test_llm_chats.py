@@ -268,7 +268,7 @@ class TestChatRoutes:
     def test_list_chats(self, client, user, monkeypatch):
         monkeypatch.setattr(
             openwebui_service, "list_chats",
-            lambda token, limit=50: [{"id": "chat-1", "title": "One"}],
+            lambda token, limit=50, chat_type=None: [{"id": "chat-1", "title": "One"}],
         )
         r = client.get("/api/v1/llm/chats", headers=_auth(user))
         assert r.status_code == 200
@@ -277,7 +277,7 @@ class TestChatRoutes:
     def test_create_sets_current_pointer(self, client, user, monkeypatch):
         monkeypatch.setattr(
             openwebui_service, "create_chat",
-            lambda token, title="New Chat", model=None: {
+            lambda token, title="New Chat", model=None, chat_type=None: {
                 "id": "chat-new", "title": title,
             },
         )

@@ -63,11 +63,15 @@ class LLMChatBody(BaseModel):
     use_history: bool = Field(default=True)
     history_limit: int = Field(default=20, ge=0, le=MAX_MESSAGES)
     persist: bool = Field(default=True)
+    # Chat type for filtering (assistant, extract_albums, extract_concerts, etc.)
+    chat_type: str | None = Field(default=None, max_length=64)
 
 
 class LLMChatCreate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     model: str | None = Field(default=None, max_length=512)
+    # Chat type for filtering (assistant, extract_albums, extract_concerts, etc.)
+    chat_type: str | None = Field(default=None, max_length=64)
 
 
 class ExtractBody(BaseModel):
@@ -156,9 +160,12 @@ async def models(user: User = Depends(get_current_user)):
 
 
 @router.get("/chats", summary="The signed-in user's Open WebUI chats")
-async def list_chats(user: User = Depends(get_current_user)):
+async def list_chats(
+    user: User = Depends(get_current_user),
+    chat_type: str | None = None,
+):
     try:
-        rows = await _with_chat_token(user, openwebui_service.list_chats)
+        rows = await _with_chat_token(user, openwebui_service.list_chats, chat_type=chat_type)
         return {"data": rows}
     except openwebui_service.OpenWebUIError as exc:
         raise _chat_error(exc) from exc
@@ -200,7 +207,7 @@ async def create_chat(
     title = (body.title or "").strip() or "New Chat"
     try:
         row = await _with_chat_token(
-            user, openwebui_service.create_chat, title=title, model=body.model
+            user, openwebui_service.create_chat, title=title, model=body.model, chat_type=body.chat_type
         )
     except openwebui_service.OpenWebUIError as exc:
         raise _chat_error(exc) from exc
@@ -315,6 +322,7 @@ async def chat(
                     openwebui_service.create_chat,
                     title=user_text[:80] or "New Chat",
                     model=result.get("model"),
+                    chat_type=body.chat_type,
                 )
                 chat_id = row["id"]
             await _with_chat_token(
