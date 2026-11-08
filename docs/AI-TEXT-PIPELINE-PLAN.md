@@ -152,13 +152,16 @@ Compared with the original stack at
 
 ## 5. Acceptance criteria (whole plan)
 
-- [ ] Full source text is persisted and hash-verifiable for text, URL, and file scans.
-- [ ] Extraction is exhaustive across long inputs (no silent 6k/20k truncation).
-- [ ] Scan progress is monotonic and visible in both the scan row and the Open WebUI chat.
-- [ ] JSON paste still works unchanged for small inputs.
-- [ ] Open WebUI file uploads land in MinIO; websockets use Redis.
-- [ ] No secrets, tokens, or signed URLs are committed; `docker-data/` stays gitignored.
-- [ ] `/api/v1` remains additive; existing clients keep working.
+- [x] Full source text is persisted and hash-verifiable for text, URL, and file scans.
+- [x] Extraction is exhaustive across long inputs (no silent 6k/20k truncation).
+- [x] Scan progress is monotonic and visible in both the scan row and the Open WebUI chat.
+- [x] JSON paste still works unchanged for small inputs (`POST /api/v1/concert-scans`).
+- [x] Open WebUI file uploads land in MinIO; websockets use Redis.
+- [x] No secrets, tokens, or signed URLs are committed; `docker-data/` stays gitignored.
+- [x] `/api/v1` remains additive; existing clients keep working.
+
+Phases 1-5 + client upload are shipped and verified. Phase 6 (optional RAG Q&A
+over `scan_sources`) is the only open item.
 
 ---
 
