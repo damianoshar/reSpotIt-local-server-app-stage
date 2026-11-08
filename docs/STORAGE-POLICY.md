@@ -22,7 +22,7 @@
 | **Concerts** | **Server** | SQLite / Room | ✅ `/concerts` | shipped (Phase B–D) |
 | **Hidden duplicates** | **Server** | Preferences / `dedupe_prefs` | ✅ `/albums/hidden` | shipped (Phase B–D) |
 | LLM chat sessions | **Server** | — | ✅ | keep |
-| AI scan source text (paste/URL/file) | **Server** | — | ⏳ planned (`scan_sources`, migration 015) | persist full text + `sha256`; see §8 |
+| AI scan source text (paste/URL/file) | **Server** | — | ✅ `scan_sources` (migration 015) | full text + `sha256`; see §8 |
 | Server-side Spotify link / followed artists | **Server** | — | ✅ | keep |
 | Queue playlist ref | **Device-only** | `QueuePlaylistStore` | — | never sync |
 | Backup settings, server URL, mode, autohide, playback tuning, librespot keys | **Device-only** | Preferences / prefs | — | never sync |
@@ -106,16 +106,15 @@
 
 ---
 
-## 8. AI scan source archive (planned — migration `015`)
+## 8. AI scan source archive (shipped — migration `015`)
 
-The AI scan path currently discards its input: `create_scan` keeps only
-`source[:120]`, URL text is truncated to 6,000 chars, and pasted text is capped
-at 20,000. That makes scans impossible to re-run or audit.
-
-Target: a **server-canonical, user-scoped** `scan_sources` table holding the
-full source text, its SHA-256, character count, kind (`text`/`url`/`file`) and
-`source_url`. `concert_scans` gains nullable `source_id` and `chunk_count`.
-The existing short `source` preview stays for UI compatibility.
+The scan path used to discard its input: `create_scan` kept only `source[:120]`,
+URL text was truncated to 6,000 chars, and pasted text was capped at 20,000.
+Now the full source is a **server-canonical, user-scoped** `scan_sources` row
+holding the full text, its SHA-256, character count, kind
+(`text`/`url`/`file`) and `source_url`. `concert_scans` gains nullable
+`source_id` and `chunk_count`. The short `source` preview stays for the UI.
+Long texts are extracted in overlapping chunks (map) and merged (reduce).
 
 | Datum | Owner | Store | Notes |
 |---|---|---|---|

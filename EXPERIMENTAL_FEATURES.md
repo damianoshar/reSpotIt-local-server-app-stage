@@ -119,11 +119,11 @@ open-webui:
 - [x] Web AI chat UI: history sidebar, resume, new/delete (Phase 7)
 - [x] Android AI chat UI (React and Kotlin clients)
 - [x] LLM prompt/response visibility (llama-server verbose log + `LLM_TRACE`)
-- [ ] AI scan source persistence (`scan_sources`, migration 015)
-- [ ] Chunked map-reduce extraction (raise the 6k/20k caps)
-- [ ] Large-input file upload for scans
-- [ ] Open WebUI ↔ MinIO S3 wiring
-- [ ] Open WebUI ↔ Redis websocket wiring
+- [x] AI scan source persistence (`scan_sources`, migration 015)
+- [x] Chunked map-reduce extraction (raised the 6k/20k caps)
+- [x] Large-input file upload for scans
+- [x] Open WebUI ↔ MinIO S3 wiring
+- [x] Open WebUI ↔ Redis websocket wiring
 - [ ] Optional RAG source library + Q&A
 
 ## Keycloak OIDC (Phase 3 + 4)
@@ -287,15 +287,15 @@ The scan path currently loses data: URL text is truncated to 6,000 chars, pasted
 text is capped at 20,000, and `create_scan` keeps only `source[:120]`. Fix in
 phases:
 
-- [ ] **Source persistence** — migration `015` + `scan_sources` (full text,
+- [x] **Source persistence** — migration `015` + `scan_sources` (full text,
       `sha256`, `chars`, kind), `source_id`/`chunk_count` on `concert_scans`.
-- [ ] **Chunked map-reduce** — overlapping chunks, per-chunk extraction, merge +
-      dedupe on `(artist, date, venue)`, per-chunk progress; raise caps.
-- [ ] **File upload** — `POST /api/v1/concert-scans/upload` (multipart), attach
-      from React/Kotlin.
-- [ ] **MinIO S3 wiring** — restore `STORAGE_PROVIDER=s3` + `S3_*` on both
-      Open WebUI services; env-drive MinIO credentials.
-- [ ] **Redis websocket wiring** — restore `WEBSOCKET_MANAGER=redis` +
+- [x] **Chunked map-reduce** — overlapping chunks, per-chunk extraction, merge +
+      dedupe on `(artist, date, venue)`, per-chunk progress; raised caps.
+- [x] **File upload** — `POST /api/v1/concert-scans/upload` (multipart), stores
+      stripped text (`kind=file`). Client attach buttons still pending.
+- [x] **MinIO S3 wiring** — `STORAGE_PROVIDER=s3` + `S3_*` on both Open WebUI
+      services; env-driven MinIO credentials (`MINIO_*`).
+- [x] **Redis websocket wiring** — `WEBSOCKET_MANAGER=redis` +
       `WEBSOCKET_REDIS_URL` on both Open WebUI services.
 - [ ] **Optional RAG Q&A** — index `scan_sources` into the existing Chroma
       (`all-MiniLM-L6-v2`) for a cross-source "ask my sources" feature with

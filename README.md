@@ -142,7 +142,7 @@ This adds:
 - Spotify MCP at 127.0.0.1:8090
 - reSpotIt API through nginx at https://localhost/respotit/
 
-> **MinIO / Redis status:** both containers run, but Open WebUI is **not yet wired** to them — no `STORAGE_PROVIDER=s3`/`S3_*` (uploads use local disk) and no `WEBSOCKET_MANAGER=redis` (single-process websockets). Restoring that wiring is tracked in `docs/AI-TEXT-PIPELINE-PLAN.md` (Phases 4–5, Kanso card 565).
+> **MinIO / Redis:** both are wired to Open WebUI (restored 2026-11-08) — `STORAGE_PROVIDER=s3` with `S3_*` for file uploads and `WEBSOCKET_MANAGER=redis` for websockets, on both `open-webui` and `open-webui-2`. Credentials come from `MINIO_*` (defaults keep existing data readable). See `docs/AI-TEXT-PIPELINE-PLAN.md`.
 
 ### Full-stack troubleshooting
 

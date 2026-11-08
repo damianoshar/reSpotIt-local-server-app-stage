@@ -1,9 +1,16 @@
 # AI Text Pipeline — Source Persistence, Chunked Extraction, and Storage Wiring
 
-**Status:** Planned (not implemented)
+**Status:** Phases 1–5 implemented (2026-11-08); Phase 6 (RAG Q&A) planned.
 **Tracking:** Kanso board 11, card 565 (work), card 507 (LLM feature)
 **Scope:** `reSpotIt-local-server-app` only. `/api/v1` stays additive.
 **Last updated:** 2026-11-08
+
+> **Implemented** in `841f356` (server: source archive + chunked extraction +
+> upload) and `487fcb7` (compose: MinIO S3 + Redis websockets). Live-verified:
+> migration `015` applied, a text scan persisted its 210-char source and
+> returned 3 concerts, an HTML upload stored stripped text (`kind=file`) and
+> returned 1 concert, the `openwebui` bucket exists in MinIO, and Redis holds
+> `open-webui:*` keys. 134 server tests pass.
 
 ---
 
