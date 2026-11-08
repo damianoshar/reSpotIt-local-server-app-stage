@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
 
 
 # ── Shared config ─────────────────────────────────────────────────────────────
@@ -93,6 +93,88 @@ class AlbumOut(AlbumBase):
 
 class AlbumDetail(AlbumOut):
     created_at: Optional[datetime] = None
+
+
+# ── Concerts (server-canonical, docs/STORAGE-POLICY.md) ───────────────────────
+
+class ConcertBase(_ORM):
+    id:         str
+    artist:     str  = ""
+    artist_id:  str  = ""
+    title:      str  = ""
+    date:       str  = ""
+    venue:      str  = ""
+    url:        str  = ""
+    source_url: str  = ""
+    followed:   bool = False
+    created_at: str  = ""
+
+
+class ConcertIn(ConcertBase):
+    pass
+
+
+class ConcertOut(ConcertBase):
+    added_at: Optional[datetime] = None
+
+
+class ConcertsResponse(BaseModel):
+    total:    int
+    concerts: list[ConcertOut]
+
+
+class ConcertUpsert(BaseModel):
+    items: list[ConcertIn] = []
+
+
+class ConcertImport(BaseModel):
+    items:   list[ConcertIn] = []
+    replace: bool = False
+
+
+# ── Hidden albums (server-canonical duplicate blocklist) ──────────────────────
+
+class HiddenAlbumIn(BaseModel):
+    # Clients call the album's Spotify id `id`; accept either name.
+    model_config = ConfigDict(populate_by_name=True)
+    spotify_id: str = Field(..., alias="id")
+    title:      str            = ""
+    artist:     str            = ""
+    year:       Optional[int]  = None
+    genre:      str            = ""
+    album_type: str            = "album"
+    image_url:  Optional[str]  = None
+    added_at:   str            = ""
+
+
+class HiddenAlbumOut(_ORM):
+    spotify_id: str
+    title:      str           = ""
+    artist:     str           = ""
+    year:       Optional[int] = None
+    genre:      str           = ""
+    album_type: str           = "album"
+    image_url:  Optional[str] = None
+    added_at:   str           = ""
+
+    @computed_field
+    @property
+    def id(self) -> str:
+        return self.spotify_id
+
+
+class HiddenAlbumsResponse(BaseModel):
+    total:  int
+    albums: list[HiddenAlbumOut]
+
+
+class HiddenAlbumUpsert(BaseModel):
+    items: list[HiddenAlbumIn] = []
+
+
+class HiddenAlbumImport(BaseModel):
+    items:   list[HiddenAlbumIn] = []
+    replace: bool = False
 
 
 # ── Pagination wrappers ───────────────────────────────────────────────────────

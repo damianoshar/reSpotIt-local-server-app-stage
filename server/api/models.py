@@ -231,3 +231,48 @@ class PlaylistRetention(Base):
     last_error          = Column(Text)
     created_at          = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
     updated_at          = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+
+
+class Concert(Base):
+    """Server-canonical concert rows (docs/STORAGE-POLICY.md).
+
+    ``id`` is the client-generated concert id, so the primary key is the
+    per-user composite ``(user_id, id)`` (mirrors ``AlbumTrack``). ``created_at``
+    holds the client's ISO string; ``added_at`` is the server row timestamp.
+    """
+    __tablename__ = "concerts"
+    __table_args__ = (Index("idx_concerts_user_date", "user_id", "date"),)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id         = Column(Text, primary_key=True)
+    artist     = Column(Text, nullable=False, default="")
+    artist_id  = Column(Text, nullable=False, default="")
+    title      = Column(Text, nullable=False, default="")
+    date       = Column(Text, nullable=False, default="")
+    venue      = Column(Text, nullable=False, default="")
+    url        = Column(Text, nullable=False, default="")
+    source_url = Column(Text, nullable=False, default="")
+    followed   = Column(Boolean, nullable=False, default=False)
+    created_at = Column(Text, nullable=False, default="")
+    added_at   = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+    def __repr__(self): return f"<Concert artist={self.artist!r} date={self.date!r}>"
+
+
+class HiddenAlbum(Base):
+    """Server-canonical hidden-duplicate rows (docs/STORAGE-POLICY.md).
+
+    ``spotify_id`` is the album's Spotify id (clients call it ``id``); the album
+    metadata is cached so a restore can rebuild the row without the network.
+    """
+    __tablename__ = "hidden_albums"
+    __table_args__ = (Index("idx_hidden_albums_user", "user_id"),)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    spotify_id = Column(Text, primary_key=True)
+    title      = Column(Text, nullable=False, default="")
+    artist     = Column(Text, nullable=False, default="")
+    year       = Column(Integer)
+    genre      = Column(Text, nullable=False, default="")
+    album_type = Column(Text, nullable=False, default="album")
+    image_url  = Column(Text)
+    added_at   = Column(Text, nullable=False, default="")
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+    def __repr__(self): return f"<HiddenAlbum spotify_id={self.spotify_id!r}>"

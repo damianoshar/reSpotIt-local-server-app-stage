@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .contract import STATUS_CODES, ContractError, error_envelope
-from .routers import auth, sync, images, load, albums, artists, spotify_actions, jobs, meta, import_csv, exports, llm, keycloak
+from .routers import auth, sync, images, load, albums, artists, spotify_actions, jobs, meta, import_csv, exports, llm, keycloak, concerts, hidden_albums
 
 logger = logging.getLogger("retention")
 logging.basicConfig(level=logging.INFO)
@@ -170,7 +170,7 @@ async def _unhandled(_: Request, exc: Exception):
                         content=error_envelope("internal_error", str(exc)),
                         headers={"Access-Control-Allow-Origin": "*"})
 
-for r in [auth, sync, images, load, albums, artists, spotify_actions, jobs, meta, import_csv, exports, llm, keycloak]:
+for r in [auth, sync, images, load, hidden_albums, albums, artists, spotify_actions, jobs, meta, import_csv, exports, llm, keycloak, concerts]:
     app.include_router(r.router)
 
 @app.get("/api/v1/health", tags=["health"])
