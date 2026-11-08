@@ -179,27 +179,80 @@ timings in the API log (2026-11-09):
 **Generation dominates.** Every saved output token is worth ~0.1 s. Rows used to
 cost ~30 tokens each (four named keys, `"url"` always empty).
 
+### Root cause: the server was spilling ~3.7 GB of VRAM (not MoE offload)
+
+The model is a hybrid SSM/attention 9B (`n_layer=32`, `n_head_kv=4`, and
+**`n_expert=0`** — it has **no MoE experts**, and the log contains zero `*_exps`
+tensors). So the old `-ot blk\.18..(up|down|gate_up|gate)_exps=CPU` override
+matched **nothing**: it was a no-op, and the earlier "experts on CPU" theory was
+wrong. A 6 GB RTX 3060 laptop gives only ~5,130 MiB usable, but the old flags
+demanded:
+
+| Buffer | Old (`-c 200000`) | New (`-c 16384 --flash-attn on`) |
+|---|---|---|
+| Model weights (CUDA0) | 4,474 MiB | ~4,474 MiB |
+| KV cache (CUDA0) | **3,323 MiB** | **~300 MiB** |
+| Recurrent/SSM state | 50 MiB | 50 MiB |
+| Compute buffer (CUDA0) | **1,042 MiB** | **144 MiB** |
+| **Total** | **~8,890 MiB vs 5,130 free** | **~4,970 MiB (930 MiB free)** |
+
+The ~3.7 GB overflow was copied over PCIe from host RAM every token — that, not
+token count, is what capped generation at ~9.5 tok/s.
+
 ### Applied
 
 | # | Change | Effect |
 |---|---|---|
-| 1 | Compact rows: `{"concerts": [["artist","date","venue"], ...]}` instead of objects, no `url` key | ~12 tokens/row instead of ~30 — roughly 2.5× faster generation |
+| 1 | Compact rows: `{"concerts": [["artist","date","venue"], ...]}` instead of objects, no `url` key | ~12 tokens/row instead of ~30 (a 72-row page now predicts 1,859 tokens vs ~2,677 for 80) |
 | 2 | Legacy object rows still parse (mixed answers, older prompts) | no regression |
 | 3 | Retry nudges appended to the **user** message, never the system prompt | llama.cpp reuses the prompt cache by prefix, so a retry no longer re-evaluates the whole page (was ~4,400 tokens ≈ 43 s + full generation) |
 | 4 | Empty/undated answers retried once (`_looks_like_events` gate) | rescues "Found 0 concert(s)" on a page full of events; live-verified: retry turned `{"concerts": []}` into **87 concerts** |
 | 5 | `fail_orphaned_scans()` at startup | a restart no longer leaves clients polling a scan that no worker will finish |
+| 6 | llama-server `-c 200000` → **`-c 16384`** | KV cache 3,323 MiB → ~300 MiB; frees ~3 GB |
+| 7 | llama-server **`--flash-attn on`** | KV working set and compute buffer shrink (compute 1,042 MiB → 144 MiB); faster attention |
+| 8 | Dropped the no-op `-ot ...exps=CPU` | it never matched (no experts) and hid the real problem |
+
+Launcher: `D:\huggingface\hub\start-llama-server.bat` (header records the old
+flags for rollback). After the change the server reports ~930 MiB free and
+nothing is spilled to host RAM.
+
+```bat
+llama-server.exe -m Ornith-1.5-9B-IQ4_XS.gguf ^
+  --port 8080 --host 0.0.0.0 ^
+  -c 16384 -np 1 -ctk q8_0 -ctv q8_0 -ngl 199 ^
+  --flash-attn on --api-key local ^
+  --verbose --log-prefix --log-timestamps --log-file D:\huggingface\hub\llama-server.log
+```
+
+(The dropped `-ot blk\.18..(up|down|gate_up|gate)_exps=CPU` targeted MoE expert
+tensors this model does not have.)
+
+### Measured result (2026-11-09, same 10,554-char source)
+
+| Metric | Before | After | Change |
+|---|---|---|---|
+| Prompt eval | 104 tok/s | **1,733 tok/s** | 16.6× |
+| Generation | 9.51 tok/s | **53.35 tok/s** | 5.6× |
+| Prompt eval time | ~43 s | 2.57 s | — |
+| Generation time | ~282 s | 34.4 s | — |
+| **Scan wall time** | **259 s / 72 items** | **37 s / 71 items (all dated)** | **~7×** |
+
+(The 259 s "before" already included the compact-row change, so this ~7× is the
+hardware-flag win on top of it. The pre-compact-row baseline was 352-750 s.)
 
 ### Still on the table (not applied)
 
 | # | Change | Expected | Notes |
 |---|---|---|---|
-| 6 | Grammar-constrained JSON (GBNF / `response_format` schema) | 10-20% + no invalid-JSON retries | forces the shape, drops rambling |
-| 7 | `-np 2..4` on llama-server | ~2-3× wall time when several scans run | currently `-np 1`, so concurrent scans serialize (two scans took 306 s and 413 s back to back) |
-| 8 | Smaller model (4B) or lighter quant for extraction | ~2-3× | GPU is a 6 GB RTX 3060 at 100%; current flags push MoE experts to CPU (`-ot blk.18..40 exps=CPU`) |
-| 9 | Deterministic regex pre-parse for regular listings (Bandsintown pattern: artist / `Fri, Nov 13 • 9 PM` / venue) | ~100% for those pages | LLM only for messy pages or name normalisation |
-| 10 | Trim nav/footer boilerplate before extraction | ~10-20 s prompt eval, fewer empty answers | the source includes "With over 100 million fans..." promo text |
-| 11 | Cap `max_tokens` per chunk adaptively | small | 4,096 is generous but generation stops at end-of-answer anyway |
-| 12 | Speculative decoding / draft model | 1.5-2× | needs a matching draft model |
+| 9 | Grammar-constrained JSON (GBNF / `response_format` schema) | 10-20% + no invalid-JSON retries | forces the shape, drops rambling |
+| 10 | `-np 2..4` on llama-server | ~2-3× wall time when several scans run | currently `-np 1`, so concurrent scans serialize. The KV cut now leaves headroom (~930 MiB free ≈ 3 more slots at this ctx) |
+| 11 | Smaller model (4B) or lighter quant for extraction | ~2-3× | weights now fit, so this is a quality/speed trade, not a spill fix |
+| 12 | Deterministic regex pre-parse for regular listings (Bandsintown pattern: artist / `Fri, Nov 13 • 9 PM` / venue) | ~100% for those pages | LLM only for messy pages or name normalisation |
+| 13 | Trim nav/footer boilerplate before extraction | ~10-20 s prompt eval, fewer empty answers | the source includes "With over 100 million fans..." promo text |
+| 14 | Cap `max_tokens` per chunk adaptively | small | 4,096 is generous but generation stops at end-of-answer anyway |
+| 15 | Speculative decoding / draft model | 1.5-2× | needs a matching draft model |
+| 16 | Real `-ot` block offload if VRAM is tight again (e.g. `blk\.(2[89]|3[01])\.=CPU`) | frees ~136 MiB/block | genuine override, unlike the old `_exps` pattern |
+| 17 | Raise `-c` back toward **32768** | more chunk headroom | now fits: +~300 MiB KV, still ~630 MiB free |
 
 Measure with `LLM_TRACE=1` in `.env` and the `tokens_predicted` /
 `predicted_per_second` fields the llama.cpp server returns in each completion.

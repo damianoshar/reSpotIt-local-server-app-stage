@@ -305,11 +305,24 @@ phases:
 RAG is deliberately not used for extraction: top-k retrieval drops events when
 the query is generic. Chunked extraction preserves recall.
 
-**Scan latency:** generation (~9.5 tok/s on the local 9B) is ~80% of a scan, not
-parsing. Rows were cut to compact `[artist, date, venue]` arrays (no `url`), and
-retry nudges moved to the user message so the llama.cpp prompt cache survives.
+**Scan latency:** generation (~9.5 tok/s on the local 9B) was ~80% of a scan, not
+parsing. Two independent causes, both fixed:
+
+1. **Output tokens.** Rows were cut to compact `[artist, date, venue]` arrays (no
+   `url`), and retry nudges moved to the user message so the llama.cpp prompt
+   cache survives.
+2. **VRAM spill (the bigger one).** The model has **no MoE experts**
+   (`n_expert=0`), so the old `-ot ...exps=CPU` flag matched nothing. The server
+   was really demanding ~8.9 GB (model 4.5 + KV 3.3 + compute 1.0) on a 6 GB GPU,
+   spilling ~3.7 GB to host RAM every token. `-c 16384 --flash-attn on` cut the
+   KV cache to ~300 MiB and the compute buffer to 144 MiB; everything now fits
+   with ~930 MiB free.
+
+Measured on the same source: prompt eval 104 → **1,733 tok/s**, generation
+9.5 → **53.4 tok/s**, scan wall time 259 s → **37 s** (all rows dated).
+
 Remaining options (grammar-constrained JSON, `-np`, smaller model, regex
-pre-parse, boilerplate trimming) are listed in
+pre-parse, boilerplate trimming, real `-ot` block offload) are in
 `docs/AI-TEXT-PIPELINE-PLAN.md` §6.
 
 ### LLM prompt/response visibility (implemented)
