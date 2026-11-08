@@ -404,8 +404,20 @@ _CONCERTS_SYSTEM = (
 )
 
 
+_STRICTER_SUFFIX = (
+    "\n\nIMPORTANT: Your previous answer was not valid JSON. "
+    "Reply with ONLY a single JSON object matching the requested shape. "
+    "No prose, no markdown fences, no extra text."
+)
+
+
 def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024) -> dict:
-    """Run a chat with tools disabled and parse the reply as JSON."""
+    """Run a chat with tools disabled and parse the reply as JSON.
+
+    Retries once with a stricter prompt if the first attempt does not yield
+    parseable JSON (per the plan's edge case). On the second failure the raw
+    content is included in the error so the caller can surface it.
+    """
     result = chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user_text}],
         temperature=0.1,
@@ -414,7 +426,28 @@ def extract_structured(system: str, user_text: str, *, token=None, max_tokens: i
         token=token,
     )
     content = result.get("content") or ""
-    return _parse_json_object(content)
+    try:
+        return _parse_json_object(content)
+    except LLMUpstreamError:
+        pass
+
+    # Retry once with a stricter prompt.
+    retry_result = chat(
+        [{"role": "system", "content": system + _STRICTER_SUFFIX},
+         {"role": "user", "content": user_text}],
+        temperature=0.0,
+        max_tokens=max_tokens,
+        use_tools=False,
+        token=token,
+    )
+    retry_content = retry_result.get("content") or ""
+    try:
+        return _parse_json_object(retry_content)
+    except LLMUpstreamError as exc:
+        raise LLMUpstreamError(
+            f"LLM did not return valid JSON: {exc}. "
+            f"Raw response: {retry_content[:500]!r}"
+        ) from exc
 
 
 def extract_albums(text: str, *, token=None) -> dict:
