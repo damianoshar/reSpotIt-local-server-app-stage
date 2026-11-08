@@ -300,6 +300,28 @@ class ConcertScan(Base):
     items       = Column(JSON, nullable=False, default=list)
     error       = Column(Text, nullable=False, default="")
     chat_id     = Column(Text, nullable=False, default="")
+    source_id   = Column(Text, nullable=True)
+    chunk_count = Column(Integer, nullable=False, default=0)
     created_at  = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
     updated_at  = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
     def __repr__(self): return f"<ConcertScan status={self.status!r} id={self.id!r}>"
+
+
+class ScanSource(Base):
+    """Full source text for an AI scan (paste, URL, or uploaded file).
+
+    ``concert_scans.source`` keeps only a 120-char preview for the UI; the
+    complete text lives here so a scan can be re-run, audited, and (optionally)
+    indexed for cross-source Q&A. Server-canonical and user-scoped.
+    """
+    __tablename__ = "scan_sources"
+    __table_args__ = (Index("idx_scan_sources_user_created", "user_id", "created_at"),)
+    user_id    = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id         = Column(Text, primary_key=True)
+    kind       = Column(Text, nullable=False, default="text")
+    source_url = Column(Text, nullable=False, default="")
+    content    = Column(Text, nullable=False, default="")
+    sha256     = Column(Text, nullable=False, default="")
+    chars      = Column(Integer, nullable=False, default=0)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+    def __repr__(self): return f"<ScanSource kind={self.kind!r} chars={self.chars!r}>"

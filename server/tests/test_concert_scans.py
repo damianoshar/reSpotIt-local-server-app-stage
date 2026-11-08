@@ -16,7 +16,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 from api.database import engine, get_db  # noqa: E402
 from api.main import app  # noqa: E402
-from api.models import Base, User  # noqa: E402
+from api.models import Base, ScanSource, User  # noqa: E402
 from api.services import concert_scan_service, user_auth_service  # noqa: E402
 
 
@@ -130,6 +130,140 @@ def test_latest_returns_most_recent(client, user, Session):
         newest = concert_scan_service.create_scan(db, user[0], text="second")
     latest = client.get("/api/v1/concert-scans/latest", headers=_auth(user)).json()["scan"]
     assert latest["id"] == newest.id
+
+
+# ── Source persistence + chunking ─────────────────────────────────────────────
+
+def test_create_scan_persists_full_source(Session, user):
+    text = ("Radiohead at the O2 " * 200).strip()
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], text=text)
+        assert scan.source_id
+        assert scan.source == text[:120]
+        src = concert_scan_service.get_source(db, user[0], scan.source_id)
+        assert src is not None
+        assert src.content == text and src.chars == len(text)
+        assert src.sha256 == concert_scan_service._sha256(text)
+        assert src.kind == "text"
+
+
+def test_delete_scan_removes_linked_source(Session, user):
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], text="AC/DC 2026-07-01")
+        source_id = scan.source_id
+    with Session() as db:
+        assert concert_scan_service.delete_scan(db, user[0], scan.id) == 1
+        assert concert_scan_service.get_source(db, user[0], source_id) is None
+
+
+def test_chunk_text_overlaps_and_covers():
+    text = "x" * 100
+    chunks = concert_scan_service._chunk_text(text, size=40, overlap=10)
+    assert len(chunks) == 3
+    assert all(len(c) <= 40 for c in chunks)
+    # Overlap means the joined coverage extends past the source.
+    assert chunks[0][-10:] == chunks[1][:10]
+
+
+def test_chunk_text_short_is_single():
+    assert concert_scan_service._chunk_text("short", size=40, overlap=10) == ["short"]
+    assert concert_scan_service._chunk_text("", size=40, overlap=10) == []
+
+
+def test_dedupe_merges_repeats():
+    items = [
+        {"artist": "Radiohead", "date": "2026-06-01", "venue": "O2", "url": ""},
+        {"artist": "radiohead", "date": "2026-06-01", "venue": "o2", "url": "https://x"},
+        {"artist": "Portishead", "date": "2026-06-02", "venue": "Brixton", "url": ""},
+    ]
+    out = concert_scan_service._dedupe(items)
+    assert len(out) == 2
+    assert out[0]["artist"] == "Radiohead" and out[1]["artist"] == "Portishead"
+
+
+def test_run_scan_chunks_and_dedupes(Session, user):
+    # Three chunks worth of text, one extract call per chunk.
+    text = "Radiohead O2 2026-06-01 ".ljust(60000, "x")
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], text=text)
+
+    calls = []
+    def fake_extract(chunk, **kwargs):
+        calls.append(chunk)
+        return {"concerts": [
+            {"artist": "Radiohead", "date": "2026-06-01", "venue": "O2", "url": ""},
+        ]}
+
+    with patch("api.services.llm_service.extract_concerts", side_effect=fake_extract), \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], None, None)
+
+    assert len(calls) >= 2
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.status == "ready"
+        assert row.chunk_count == len(calls)
+        # Every chunk returned the same concert; dedupe leaves one.
+        assert len(row.items) == 1
+
+
+def test_run_scan_stores_fetched_url_source(Session, user):
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], url="https://example.com/c")
+    with patch("api.services.llm_service.fetch_page_text", return_value="page text"), \
+         patch("api.services.llm_service.extract_concerts", return_value={"concerts": []}), \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], "https://example.com/c", None)
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.source_id
+        src = concert_scan_service.get_source(db, user[0], row.source_id)
+        assert src.content == "page text" and src.kind == "url"
+
+
+def test_run_scan_skips_failed_chunk(Session, user):
+    text = "Radiohead O2 2026-06-01 ".ljust(60000, "x")
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], text=text)
+
+    state = {"n": 0}
+    def flaky(chunk, **kwargs):
+        state["n"] += 1
+        if state["n"] == 2:
+            raise RuntimeError("chunk exploded")
+        return {"concerts": [
+            {"artist": "Radiohead", "date": "2026-06-01", "venue": "O2", "url": ""},
+        ]}
+
+    with patch("api.services.llm_service.extract_concerts", side_effect=flaky), \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], None, None)
+
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.status == "ready" and "skipped" in row.message
+        assert len(row.items) == 1
+
+
+def test_upload_scan_creates_file_scan(client, user, Session):
+    with patch.object(concert_scan_service, "run_scan") as worker:
+        r = client.post(
+            "/api/v1/concert-scans/upload",
+            files={"file": ("concerts.html", b"<html><body><b>Radiohead</b> O2</body></html>", "text/html")},
+            headers=_auth(user),
+        )
+    assert r.status_code == 202
+    body = r.json()
+    assert body["source_kind"] == "file"
+    assert body["source_id"]
+    with Session() as db:
+        src = concert_scan_service.get_source(db, user[0], body["source_id"])
+        # HTML is stripped to text before storing.
+        assert "<b>" not in src.content and "Radiohead" in src.content
+    worker.assert_called_once()
 
 
 # ── Background worker ─────────────────────────────────────────────────────────

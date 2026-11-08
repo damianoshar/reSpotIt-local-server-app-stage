@@ -14,12 +14,14 @@ unreachable, the scan still completes and the results still wait on the row.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
 from ..database import SessionLocal
-from ..models import ConcertScan, User
+from ..models import ConcertScan, ScanSource, User
 
 logger = logging.getLogger("concert_scans")
 
@@ -27,29 +29,115 @@ logger = logging.getLogger("concert_scans")
 # longer than an interactive call: a local model can take minutes to answer.
 SCAN_LLM_TIMEOUT = (5.0, 900.0)
 
+# Long pages are extracted in overlapping chunks (map) and merged (reduce):
+# exhaustive extraction, unlike top-k retrieval which drops events.
+CHUNK_CHARS = int(os.getenv("CONCERT_SCAN_CHUNK_CHARS", "24000"))
+CHUNK_OVERLAP = int(os.getenv("CONCERT_SCAN_CHUNK_OVERLAP", "1000"))
+# Hard ceiling on fetched/stored source text (guards against huge pages).
+MAX_SOURCE_CHARS = int(os.getenv("CONCERT_SCAN_MAX_SOURCE_CHARS", "2000000"))
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _sha256(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) -> list[str]:
+    """Split ``text`` into overlapping chunks. Short text -> a single chunk."""
+    size = CHUNK_CHARS if size is None else size
+    overlap = CHUNK_OVERLAP if overlap is None else overlap
+    text = text or ""
+    if size <= 0 or len(text) <= size:
+        return [text] if text else []
+    step = max(1, size - max(0, overlap))
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start:start + size])
+        if start + size >= len(text):
+            break
+        start += step
+    return chunks
+
+
+def _dedupe(items: list[dict]) -> list[dict]:
+    """Merge per-chunk results, dropping rows that repeat (artist, date, venue)."""
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict] = []
+    for c in items:
+        key = (
+            (c.get("artist") or "").strip().lower(),
+            (c.get("date") or "").strip(),
+            (c.get("venue") or "").strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+def _store_source(db, user_id, *, kind: str, content: str, source_url: str = "") -> ScanSource:
+    """Persist the full source text and return its row."""
+    content = content or ""
+    source = ScanSource(
+        user_id=str(user_id),
+        id=str(uuid.uuid4()),
+        kind=kind,
+        source_url=source_url or "",
+        content=content,
+        sha256=_sha256(content),
+        chars=len(content),
+    )
+    db.add(source)
+    db.flush()
+    return source
+
+
+def get_source(db, user_id, source_id: str) -> ScanSource | None:
+    if not source_id:
+        return None
+    return (
+        db.query(ScanSource)
+        .filter(ScanSource.user_id == str(user_id), ScanSource.id == source_id)
+        .first()
+    )
+
+
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
-def create_scan(db, user_id, *, url: str | None = None, text: str | None = None) -> ConcertScan:
+def create_scan(db, user_id, *, url: str | None = None, text: str | None = None,
+                kind: str | None = None) -> ConcertScan:
     url = (url or "").strip()
     text = (text or "").strip()
     is_url = bool(url)
+    source_kind = kind or ("url" if is_url else "text")
     source = url if is_url else text[:120]
+
     scan = ConcertScan(
         user_id=str(user_id),
         id=str(uuid.uuid4()),
         source=source,
         source_url=url,
-        source_kind="url" if is_url else "text",
+        source_kind=source_kind,
         status="running",
         stage="queued",
         message="Queued. The scan runs in the background.",
         items=[],
     )
+
+    # Persist the full source now when we already have it (paste or upload).
+    # URLs are fetched in the worker, which stores the text after fetching.
+    if text:
+        if len(text) > MAX_SOURCE_CHARS:
+            text = text[:MAX_SOURCE_CHARS]
+        row = _store_source(db, user_id, kind=source_kind, content=text, source_url=url)
+        scan.source_id = row.id
+        scan.source = text[:120]
+
     db.add(scan)
     db.commit()
     db.refresh(scan)
@@ -74,11 +162,17 @@ def latest_scan(db, user_id) -> ConcertScan | None:
 
 
 def delete_scan(db, user_id, scan_id: str) -> int:
+    scan = get_scan(db, user_id, scan_id)
+    source_id = scan.source_id if scan is not None else None
     deleted = (
         db.query(ConcertScan)
         .filter(ConcertScan.user_id == str(user_id), ConcertScan.id == scan_id)
         .delete(synchronize_session=False)
     )
+    if deleted and source_id:
+        db.query(ScanSource).filter(
+            ScanSource.user_id == str(user_id), ScanSource.id == source_id
+        ).delete(synchronize_session=False)
     db.commit()
     return deleted
 
@@ -157,6 +251,8 @@ def _normalise(data: dict) -> list[dict]:
 def _title_for(scan: ConcertScan) -> str:
     if scan.source_kind == "url" and scan.source_url:
         return f"Concert scan: {scan.source_url}"
+    if scan.source_kind == "file":
+        return "Concert scan: uploaded file"
     return "Concert scan: pasted text"
 
 
@@ -185,32 +281,75 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
             db.commit()
 
         try:
-            body_text = (text or "").strip()
-            if (url or "").strip():
+            # Prefer the persisted source (paste/upload/previous fetch); fall
+            # back to the values the caller passed for old-client compatibility.
+            body_text = ""
+            if scan.source_id:
+                src = get_source(db, user_id, scan.source_id)
+                if src is not None:
+                    body_text = (src.content or "").strip()
+            if not body_text and (text or "").strip():
+                body_text = text.strip()
+            if (url or "").strip() and not body_text:
                 chatter.progress("Fetching the page…")
                 scan.stage = "fetching"
                 scan.message = "Fetching the page…"
                 scan.updated_at = _utcnow()
                 db.commit()
-                body_text = llm_service.fetch_page_text(url.strip(), max_chars=6000)
+                body_text = llm_service.fetch_page_text(
+                    url.strip(), max_chars=MAX_SOURCE_CHARS)
+                if len(body_text) > MAX_SOURCE_CHARS:
+                    body_text = body_text[:MAX_SOURCE_CHARS]
+                if body_text and not scan.source_id:
+                    row = _store_source(
+                        db, user_id, kind="url",
+                        content=body_text, source_url=url.strip(),
+                    )
+                    scan.source_id = row.id
 
             if not body_text:
                 raise llm_service.LLMError("Provide url or text.")
 
-            chatter.progress("Extracting concerts with the model…")
-            scan.stage = "extracting"
-            scan.message = "Extracting concerts with the model…"
+            chunks = _chunk_text(body_text)
+            scan.chunk_count = len(chunks)
             scan.updated_at = _utcnow()
             db.commit()
 
-            data = llm_service.extract_concerts(body_text, token=chatter.token,
-                                                timeout=SCAN_LLM_TIMEOUT)
-            items = _normalise(data)
+            results: list[dict] = []
+            skipped = 0
+            for i, chunk in enumerate(chunks, 1):
+                if len(chunks) == 1:
+                    chatter.progress("Extracting concerts with the model…")
+                else:
+                    chatter.progress(f"Extracting concerts (chunk {i}/{len(chunks)})…")
+                scan.stage = f"extracting {i}/{len(chunks)}"
+                scan.message = (
+                    "Extracting concerts with the model…"
+                    if len(chunks) == 1
+                    else f"Extracting concerts (chunk {i} of {len(chunks)})…"
+                )
+                scan.updated_at = _utcnow()
+                db.commit()
+                try:
+                    data = llm_service.extract_concerts(
+                        chunk, token=chatter.token, timeout=SCAN_LLM_TIMEOUT)
+                except Exception as chunk_exc:
+                    if len(chunks) == 1:
+                        raise
+                    skipped += 1
+                    logger.warning("Concert scan %s chunk %d failed: %s",
+                                   scan_id, i, chunk_exc)
+                    continue
+                results.extend(_normalise(data))
+
+            items = _dedupe(results)
 
             scan.items = items
             scan.status = "ready"
             scan.stage = "done"
             scan.message = f"Found {len(items)} concert(s)."
+            if skipped:
+                scan.message += f" {skipped} chunk(s) skipped."
             scan.error = ""
             scan.updated_at = _utcnow()
             db.commit()

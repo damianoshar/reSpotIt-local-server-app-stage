@@ -366,6 +366,15 @@ import json as _json
 import re as _re
 
 
+def html_to_text(html: str) -> str:
+    """Strip scripts/styles/tags and collapse whitespace to plain text."""
+    text = html or ""
+    text = _re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=_re.S | _re.I)
+    text = _re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=_re.S | _re.I)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    return _re.sub(r"\s+", " ", text).strip()
+
+
 def fetch_page_text(url: str, *, max_chars: int = 12000) -> str:
     """Fetch a URL and return cleaned plain text (tags stripped, truncated)."""
     if not url or not str(url).strip():
@@ -380,11 +389,7 @@ def fetch_page_text(url: str, *, max_chars: int = 12000) -> str:
         raise LLMUnavailable(f"Cannot fetch page: {exc}") from exc
     if resp.status_code >= 400:
         raise LLMUpstreamError(f"Page returned HTTP {resp.status_code}")
-    html = resp.text or ""
-    text = _re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=_re.S | _re.I)
-    text = _re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=_re.S | _re.I)
-    text = _re.sub(r"<[^>]+>", " ", text)
-    text = _re.sub(r"\s+", " ", text).strip()
+    text = html_to_text(resp.text or "")
     if len(text) > max_chars:
         text = text[:max_chars]
     return text

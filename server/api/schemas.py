@@ -181,7 +181,9 @@ class HiddenAlbumImport(BaseModel):
 
 class ConcertScanStart(BaseModel):
     url:  Optional[str] = Field(default=None, max_length=2048)
-    text: Optional[str] = Field(default=None, max_length=20000)
+    # Full text is persisted and extracted in chunks, so the old 20k cap is
+    # gone. Very large inputs should use the multipart upload route instead.
+    text: Optional[str] = Field(default=None, max_length=2_000_000)
 
 
 class ConcertScanItem(BaseModel):
@@ -202,6 +204,8 @@ class ConcertScanOut(_ORM):
     items:       list[ConcertScanItem] = []
     error:       str = ""
     chat_id:     str = ""
+    source_id:   Optional[str] = None
+    chunk_count: int = 0
     created_at:  Optional[datetime] = None
     updated_at:  Optional[datetime] = None
 
