@@ -177,6 +177,39 @@ class HiddenAlbumImport(BaseModel):
     replace: bool = False
 
 
+# ── Concert scans (click-and-forget AI scan, pending review) ──────────────────
+
+class ConcertScanStart(BaseModel):
+    url:  Optional[str] = Field(default=None, max_length=2048)
+    text: Optional[str] = Field(default=None, max_length=20000)
+
+
+class ConcertScanItem(BaseModel):
+    artist: str = ""
+    date:   str = ""
+    venue:  str = ""
+    url:    str = ""
+
+
+class ConcertScanOut(_ORM):
+    id:          str
+    source:      str = ""
+    source_url:  str = ""
+    source_kind: str = "text"
+    status:      str = "running"
+    stage:       str = "queued"
+    message:     str = ""
+    items:       list[ConcertScanItem] = []
+    error:       str = ""
+    chat_id:     str = ""
+    created_at:  Optional[datetime] = None
+    updated_at:  Optional[datetime] = None
+
+
+class ConcertScanLatest(BaseModel):
+    scan: Optional[ConcertScanOut] = None
+
+
 # ── Pagination wrappers ───────────────────────────────────────────────────────
 
 class PaginatedAlbums(BaseModel):

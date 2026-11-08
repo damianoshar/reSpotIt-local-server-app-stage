@@ -276,3 +276,30 @@ class HiddenAlbum(Base):
     added_at   = Column(Text, nullable=False, default="")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
     def __repr__(self): return f"<HiddenAlbum spotify_id={self.spotify_id!r}>"
+
+
+class ConcertScan(Base):
+    """A background (click-and-forget) AI concert scan.
+
+    Created by ``POST /api/v1/concert-scans`` and filled in by a background
+    worker: progress is streamed into an Open WebUI chat (``chat_id``) while
+    ``items`` is populated and ``status`` moves running -> ready/error. Clients
+    show a ready scan as a pending review list; nothing is added to ``concerts``
+    until the user saves.
+    """
+    __tablename__ = "concert_scans"
+    __table_args__ = (Index("idx_concert_scans_user_created", "user_id", "created_at"),)
+    user_id     = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id          = Column(Text, primary_key=True)
+    source      = Column(Text, nullable=False, default="")
+    source_url  = Column(Text, nullable=False, default="")
+    source_kind = Column(Text, nullable=False, default="text")
+    status      = Column(Text, nullable=False, default="running")
+    stage       = Column(Text, nullable=False, default="queued")
+    message     = Column(Text, nullable=False, default="")
+    items       = Column(JSON, nullable=False, default=list)
+    error       = Column(Text, nullable=False, default="")
+    chat_id     = Column(Text, nullable=False, default="")
+    created_at  = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+    updated_at  = Column(TIMESTAMP(timezone=True), nullable=False, default=_utcnow)
+    def __repr__(self): return f"<ConcertScan status={self.status!r} id={self.id!r}>"
