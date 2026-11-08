@@ -13,6 +13,8 @@ The endpoints are additive: the frozen /api/v1 library contract is untouched.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 from typing import Any, Iterable
 
@@ -20,9 +22,32 @@ from . import mcp_service
 
 import requests
 
+logger = logging.getLogger("llm")
+
 CONNECT_TIMEOUT = 5.0
 MODELS_TIMEOUT = 15.0
 DEFAULT_READ_TIMEOUT = 30.0
+
+# Diagnostic tracing of every request/response that leaves this module.
+# Off by default; set LLM_TRACE=1 on the api service to log full prompts and
+# completions (may contain user data -- use only while debugging).
+TRACE_CHARS = 20000
+
+
+def _trace_enabled() -> bool:
+    return os.getenv("LLM_TRACE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trace(label: str, payload: Any) -> None:
+    if not _trace_enabled():
+        return
+    try:
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        text = repr(payload)
+    if len(text) > TRACE_CHARS:
+        text = text[:TRACE_CHARS] + f"... (+{len(text) - TRACE_CHARS} chars)"
+    logger.info("LLM TRACE %s: %s", label, text)
 
 
 class LLMError(RuntimeError):
@@ -100,6 +125,7 @@ def _request(
     token: str | None = None,
 ) -> dict[str, Any]:
     url = _base_url() + path
+    _trace("-> {} {}".format(method, path), json_body)
     try:
         resp = requests.request(
             method,
@@ -114,6 +140,7 @@ def _request(
         raise LLMUnavailable(f"Cannot reach Open WebUI at {_base_url()}.") from exc
 
     if resp.status_code >= 400:
+        _trace("<- {} {} (error)".format(resp.status_code, path), resp.text[:4000])
         detail: Any = ""
         try:
             body = resp.json()
@@ -136,6 +163,7 @@ def _request(
         raise LLMUpstreamError("Open WebUI returned a non-JSON response.") from exc
     if not isinstance(data, dict):
         raise LLMUpstreamError("Open WebUI returned an unexpected response.")
+    _trace("<- {} {}".format(resp.status_code, path), data)
     return data
 
 

@@ -37,6 +37,8 @@ services:
       REDIRECT_URI:   ${REDIRECT_URI:-https://127.0.0.1:8000/api/v1/auth/callback}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://127.0.0.1:8000}
       SSL_ENABLED:    ${SSL_ENABLED:-true}
+      # Diagnostic: LLM_TRACE=1 logs full LLM prompts/completions to the api log.
+      LLM_TRACE:      ${LLM_TRACE:-0}
     ports:
       - "8000:8000"              # API on all interfaces (phone reaches it over the LAN)
     volumes:

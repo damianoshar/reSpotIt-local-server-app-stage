@@ -151,6 +151,31 @@ class LLMServiceTests(unittest.TestCase):
         with self.assertRaises(llm_service.LLMUnavailable):
             llm_service.resolve_model()
 
+    @patch("api.services.llm_service.requests.request")
+    def test_trace_logs_prompt_and_response_when_enabled(self, request):
+        request.return_value = _response(
+            payload={"choices": [{"message": {"content": "hi"}}]}
+        )
+
+        with patch.dict(os.environ, {"LLM_TRACE": "1"}):
+            with self.assertLogs("llm", level="INFO") as logs:
+                llm_service.chat(
+                    [{"role": "user", "content": "secret-prompt"}], model="m"
+                )
+
+        output = "\n".join(logs.output)
+        self.assertIn("LLM TRACE -> POST /api/chat/completions", output)
+        self.assertIn("secret-prompt", output)
+        self.assertIn("LLM TRACE <- 200 /api/chat/completions", output)
+
+    @patch("api.services.llm_service.requests.request")
+    def test_trace_is_silent_when_disabled(self, request):
+        request.return_value = _response(payload={"data": [{"id": "m"}]})
+
+        with patch.dict(os.environ, {"LLM_TRACE": ""}):
+            with self.assertNoLogs("llm", level="INFO"):
+                llm_service.list_models()
+
 
 if __name__ == "__main__":
     unittest.main()
