@@ -119,6 +119,36 @@ open-webui:
 - [x] Web AI chat UI: history sidebar, resume, new/delete (Phase 7)
 - [x] Android AI chat UI (React and Kotlin clients)
 
+## AI URL scan (Phases 0-4, 2026-11-07)
+
+Scan a web page (or pasted text) for albums/concerts. AI extracts `{artist, album}` /
+`{artist, date, venue, url}` pairs; backend resolves them to Spotify IDs; results can
+be saved to the library or turned into a playlist. Works for pages with no Spotify links.
+
+- [x] Phase 0 (backend): `POST /api/v1/llm/extract-albums`, `/extract-concerts`,
+      `POST /api/v1/spotify/resolve-albums`, `/resolve-artists`, `GET /followed-artists`
+      + tests (`f3cf98d`).
+- [x] Phase 1 (React): `AiUrlScanDialog` (extract albums, save/playlist) (`a1aa24e`).
+- [x] Phase 2 (React): concerts calendar (scan, storage, list dialog) (`c7e8107`).
+- [x] Phase 3 (Kotlin): data layer, repository, ViewModel, Compose dialog
+      (`f6c751d`, `d760241`, `895f7c0`, `5865509`, plus `49e28bf` for the
+      "Scan page with AI (albums)" button).
+- [x] Phase 4 (standalone fallback): manual paste without AI (`cfde65b`).
+
+Entry points (React Settings/Tools): "Scan page with AI (albums)", "Scan concerts (AI)",
+"View concerts calendar", "Add albums from a website" (native WebView, Spotify links only).
+Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add from site".
+
+Known follow-ups:
+- Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve
+  routes, which Retrofit rejects ("parameter type must not include a type variable
+  or wildcard"). Fix: concrete body DTOs. Blocks the Kotlin scan at runtime.
+- Backend `extract_structured` calls the LLM once; plan edge case (retry once with
+  stricter prompt on non-JSON) is not implemented. Causes "model did not return
+  correct json" on some pages.
+- Kotlin dialogs accept URL only; React also accepts pasted text. Add paste-text
+  field to Kotlin `ConcertsDialog` and `AiUrlScanDialog`.
+
 ## Keycloak OIDC (Phase 3 + 4)
 
 Keycloak is opt-in: `KEYCLOAK_ENABLED=false` (default) keeps email/password

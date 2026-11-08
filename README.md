@@ -10,6 +10,7 @@ reSpotIt is a multi-component project with several variants:
 
 - **Local Server (standalone)** (this repo) — Python/FastAPI backend + React web frontend + PostgreSQL. Runs entirely on your machine. No AI assistant. Full feature set: library management, playlists, sync, stats, CSV import/export.
 - **Local Server + AI assistant** — Same server plus OpenWebUI, Keycloak, and MCP services for AI-powered library queries. Available as a full stack overlay in this repo (`docker-compose.full.yml`) or as a self-contained backup workspace (`reSpotIt-local-server-app-clean-backup-2`).
+- **AI URL scan** — In media-server mode the Android apps can scan any web page for albums/concerts (even pages without Spotify links) via the local LLM: "Scan page with AI (albums)" and "Scan concerts (AI)" in the Tools tab. Results resolve to Spotify and save to the library or become a playlist. See `EXPERIMENTAL_FEATURES.md`.
 - **Kotlin client** — Native Android app (Kotlin + Jetpack Compose). Full feature parity with media-server mode. See `reSpotIt-kotlin-version`.
 - **React clients** — Capacitor/TypeScript Android apps. Offer better compatibility on older Android models and low-RAM devices than the Kotlin client. Two variants:
   - **Standard** — Web Playback SDK for browser-based playback.
