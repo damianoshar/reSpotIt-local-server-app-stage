@@ -243,7 +243,7 @@ async def extract_albums(body: ExtractBody, user: User = Depends(get_current_use
     text = ""
     if body.url:
         try:
-            text = await run_in_threadpool(llm_service.fetch_page_text, body.url)
+            text = await run_in_threadpool(llm_service.fetch_page_text, body.url, max_chars=6000)
         except llm_service.LLMError as exc:
             raise _contract_error(exc) from exc
     if body.text:
@@ -262,7 +262,7 @@ async def extract_concerts(body: ExtractBody, user: User = Depends(get_current_u
     text = ""
     if body.url:
         try:
-            text = await run_in_threadpool(llm_service.fetch_page_text, body.url)
+            text = await run_in_threadpool(llm_service.fetch_page_text, body.url, max_chars=6000)
         except llm_service.LLMError as exc:
             raise _contract_error(exc) from exc
     if body.text:

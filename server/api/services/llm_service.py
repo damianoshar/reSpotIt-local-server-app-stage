@@ -451,7 +451,7 @@ def extract_structured(system: str, user_text: str, *, token=None, max_tokens: i
 
 
 def extract_albums(text: str, *, token=None) -> dict:
-    data = extract_structured(_ALBUMS_SYSTEM, text, token=token, max_tokens=1024)
+    data = extract_structured(_ALBUMS_SYSTEM, text, token=token, max_tokens=4096)
     albums = data.get("albums") if isinstance(data.get("albums"), list) else []
     out = []
     for a in albums:
@@ -464,7 +464,7 @@ def extract_albums(text: str, *, token=None) -> dict:
 
 
 def extract_concerts(text: str, *, token=None) -> dict:
-    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=1024)
+    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=4096)
     concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []
     out = []
     for c in concerts:

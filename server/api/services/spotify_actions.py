@@ -5,6 +5,7 @@ Playlist and queue operations against the Spotify Web API.
 """
 
 import time
+import re
 import requests
 
 BASE = "https://api.spotify.com/v1"
@@ -517,15 +518,38 @@ def _best_artist_match(artists: list[dict], name: str) -> dict | None:
     return artists[0] if artists and isinstance(artists[0], dict) else None
 
 
+def _normalize_artist_name(name: str) -> str:
+    """Lowercase and strip punctuation so names/titles correlate reliably."""
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
 def resolve_artists(token: str, names: list[str]) -> dict:
-    """Resolve artist names to Spotify IDs and followed status."""
-    followed_ids = {a.get("id") for a in get_followed_artists(token) if a.get("id")}
+    """Resolve artist names to Spotify IDs, preferring the user's followed artists."""
+    followed = get_followed_artists(token)
+    followed_ids = {a.get("id") for a in followed if a.get("id")}
+    followed_by_norm: dict[str, dict] = {}
+    for a in followed:
+        if a.get("id"):
+            followed_by_norm.setdefault(_normalize_artist_name(a.get("name")), a)
     resolved = []
     unresolved = []
     for raw in names or []:
         name = str(raw or "").strip()
         if not name:
             continue
+        # 1) Correlate directly against the followed list first (source of truth).
+        f = followed_by_norm.get(_normalize_artist_name(name))
+        if f:
+            resolved.append({
+                "name": name,
+                "spotify_id": f.get("id"),
+                "matched_name": f.get("name") or name,
+                "image_url": f.get("image_url") or "",
+                "genres": f.get("genres") or [],
+                "followed": True,
+            })
+            continue
+        # 2) Fall back to a catalog search for artists the user does not follow.
         try:
             data = search_spotify_catalog(token, name, limit=5)
         except Exception:
