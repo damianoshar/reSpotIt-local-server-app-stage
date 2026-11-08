@@ -292,7 +292,8 @@ phases:
 - [x] **Chunked map-reduce** — overlapping chunks, per-chunk extraction, merge +
       dedupe on `(artist, date, venue)`, per-chunk progress; raised caps.
 - [x] **File upload** — `POST /api/v1/concert-scans/upload` (multipart), stores
-      stripped text (`kind=file`). Client attach buttons still pending.
+      stripped text (`kind=file`). Attach-file button + paste-as-file in the
+      React (main + librespot) and Kotlin clients.
 - [x] **MinIO S3 wiring** — `STORAGE_PROVIDER=s3` + `S3_*` on both Open WebUI
       services; env-driven MinIO credentials (`MINIO_*`).
 - [x] **Redis websocket wiring** — `WEBSOCKET_MANAGER=redis` +
