@@ -19,8 +19,8 @@
 | Albums / artists / tracks | **Server** | SQLite / Room | ✅ user-scoped tables | keep |
 | Playlists + playlist tracks | **Server** (cache) | SQLite / Room | ✅ user-scoped cache of Spotify | push/pull cache |
 | Playlist retention (expiry) | **Server** | `PlaylistRetentionService` | ✅ `/playlists/retention` | add to push/pull |
-| **Concerts** | **Server** ← new | SQLite / Room | ❌ | **add table + CRUD + import** |
-| **Hidden duplicates** | **Server** ← new | Preferences / `dedupe_prefs` | ❌ | **add table + CRUD + import** |
+| **Concerts** | **Server** | SQLite / Room | ✅ `/concerts` | shipped (Phase B–D) |
+| **Hidden duplicates** | **Server** | Preferences / `dedupe_prefs` | ✅ `/albums/hidden` | shipped (Phase B–D) |
 | LLM chat sessions | **Server** | — | ✅ | keep |
 | Server-side Spotify link / followed artists | **Server** | — | ✅ | keep |
 | Queue playlist ref | **Device-only** | `QueuePlaylistStore` | — | never sync |
@@ -50,8 +50,8 @@
 | Playlist retention | ✅ | ✅ | `retentionRemote`; add to push/pull |
 | AI album scan (URL/paste) | ✅ | ✅ | server LLM |
 | Followed-artist correlation | ✅ | ✅ | `/spotify/resolve-artists` |
-| **Concert scan + storage** | ✅ | ⚠️ | **Phase B: server table + CRUD** |
-| **Duplicate finder** | ✅ | ❌ | **Phase B: remote album list + hidden store** |
+| **Concert scan + storage** | ✅ | ✅ | server table + CRUD/import (Phase B–D shipped) |
+| **Duplicate finder** | ✅ | ✅ | remote album list + server blocklist (Phase B–D shipped) |
 | Add-from-site | ✅ | ✅ | resolve only |
 | CSV export | ✅ | ✅ | `/exports` |
 | Queue playlist | ✅ | n/a | Device-only by design |
