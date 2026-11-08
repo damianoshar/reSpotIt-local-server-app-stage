@@ -28,7 +28,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/data
+      - ./docker-data/minio:/data
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -54,7 +54,7 @@ services:
       POSTGRES_USER: ${OPENWEBUI_DB_USER:-openwebui}
       POSTGRES_PASSWORD: ${OPENWEBUI_DB_PASSWORD:-openwebui}
     volumes:
-      - openwebui-db-data:/var/lib/postgresql/data
+      - ./docker-data/openwebui-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${OPENWEBUI_DB_USER:-openwebui}"]
       interval: 5s
@@ -69,7 +69,7 @@ services:
       POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
       POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
     volumes:
-      - keycloak-db-data:/var/lib/postgresql/data
+      - ./docker-data/keycloak-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak}"]
       interval: 5s
@@ -136,7 +136,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - open-webui-data:/app/backend/data
+      - ./docker-data/open-webui:/app/backend/data
       - ./OpenWebUI-stack/ssl/ca-bundle.crt:/etc/ssl/ca-bundle.crt:ro
       - ./OpenWebUI-stack/openwebui-entrypoint.sh:/app/entrypoint.sh:ro
     entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
@@ -161,7 +161,7 @@ services:
       OPENAI_API_KEYS: ${OPENAI_API_KEY:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql://${OPENWEBUI_DB_USER:-openwebui}:${OPENWEBUI_DB_PASSWORD:-openwebui}@openwebui-db:5432/${OPENWEBUI_DB_NAME:-openwebui}}
     volumes:
-      - open-webui-data:/app/backend/data
+      - ./docker-data/open-webui:/app/backend/data
     restart: unless-stopped
 
   nginx-proxy:
@@ -183,7 +183,7 @@ services:
     image: valkey/valkey:8.0.1-alpine
     restart: unless-stopped
     volumes:
-      - redis-data:/data
+      - ./docker-data/redis:/data
 
   redis-insight:
     image: redislabs/redisinsight:3.8.0
@@ -197,7 +197,7 @@ services:
     image: ghcr.io/open-webui/pipelines@sha256:b48e9bc338ce2be0acfbeff01810db72408a12f07739f9e3879c1f2b00952d6e
     restart: unless-stopped
     volumes:
-      - pipelines:/app/pipelines
+      - ./docker-data/pipelines:/app/pipelines
     environment:
       PIPELINES_API_KEY: ${PIPELINES_API_KEY:-}
 
@@ -238,13 +238,9 @@ services:
       SPOTIFY_MCP_TOKEN_FILE: /app/data/tokens.json
       SPOTIFY_MCP_DATA_DIR: /app/data
 
-volumes:
-  minio-data:
-  open-webui-data:
-  redis-data:
-  pipelines:
-  keycloak-db-data:
-  openwebui-db-data:
+# No named volumes: every volume is bind-mounted under ./docker-data/ so all
+# state lives inside the project folder.
+volumes: {}
 
 networks:
   default:

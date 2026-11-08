@@ -10,7 +10,8 @@ services:
       POSTGRES_PASSWORD: spotify
       POSTGRES_DB:       spotify
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      # Bind-mount every volume into the project folder (no named volumes).
+      - ./docker-data/postgres:/var/lib/postgresql/data
     ports:
       # Host 5433: the elixir tree's Postgres already owns host 5432.
       - "5433:5432"
@@ -73,5 +74,5 @@ services:
       - api
     restart: unless-stopped
 
-volumes:
-  pg_data:
+# Volumes are bind-mounted into ./docker-data/ (see the volume entries above),
+# so every piece of state lives inside the project folder. No named volumes.

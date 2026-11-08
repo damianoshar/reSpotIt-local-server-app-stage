@@ -40,5 +40,8 @@ server/uvicorn_https.out
 server/*.db
 data/
 
+# docker state: every compose volume is bind-mounted here (never commit)
+docker-data/
+
 # Visual Studio
 .vs/
