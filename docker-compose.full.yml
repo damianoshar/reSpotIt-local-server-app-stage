@@ -11,6 +11,12 @@
 # .env.example → .env here to use this overlay.
 
 services:
+  # host.docker.internal is automatic on Docker Desktop but not on Linux.
+  # The API and Open WebUI use it for the optional host llama-server.
+  api:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   # ────────────────────────────────────────────────────────────────────────────
   # OpenWebUI / Keycloak stack (from backup workspace)
   # ────────────────────────────────────────────────────────────────────────────
@@ -122,9 +128,13 @@ services:
       OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-open-webui}
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-open-webui-secret}
       OAUTH_MERGE_ACCOUNTS_BY_EMAIL: ${OAUTH_MERGE_ACCOUNTS_BY_EMAIL:-true}
-      WEBUI_AUTH_TRUSTED_EMAIL_HEADER: X-OWUI-Trusted-Email
-      WEBUI_AUTH_TRUSTED_NAME_HEADER: X-OWUI-Trusted-Name
+      # No trusted-header auth on the public instance: browsers cannot supply
+      # the header, and enabling it makes the normal sign-in fail with
+      # "Your provider has not provided a trusted header". The API's
+      # trusted-header exchange targets open-webui-2 instead.
       DATABASE_URL: ${DATABASE_URL:-postgresql://${OPENWEBUI_DB_USER:-openwebui}:${OPENWEBUI_DB_PASSWORD:-openwebui}@openwebui-db:5432/${OPENWEBUI_DB_NAME:-openwebui}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - open-webui-data:/app/backend/data
       - ./OpenWebUI-stack/ssl/ca-bundle.crt:/etc/ssl/ca-bundle.crt:ro
@@ -136,6 +146,8 @@ services:
     image: ghcr.io/open-webui/open-webui:v0.13.0
     depends_on:
       - openwebui-db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       WEBUI_URL: https://localhost
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}

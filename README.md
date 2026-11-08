@@ -81,22 +81,52 @@ See `server/README.md` for full setup details.
 
 ## 🤖 Full Stack — reSpotIt + OpenWebUI + Keycloak + MCP
 
-### Quick start (recommended)
+### One-click (recommended)
 ```bash
-# Generates secrets, configures .env, copies required files, and launches:
 ./start-full-stack.sh          # Linux/macOS
-# or
 start-full-stack.bat           # Windows
 ```
 
-### Manual (two options)
+The launcher is **idempotent** — run it as often as you like. It:
 
-#### Option 1: Overlay in this repo (self-contained)
+1. creates `.env` on first run, then **preserves existing secrets** (rotating
+   DB passwords would break existing Postgres volumes);
+2. copies `certs/` and `OpenWebUI-stack/` from
+   `../reSpotIt-local-server-app-clean-backup-2` when they are missing;
+3. repairs the known full-stack hiccups before starting containers:
+   - replaces the legacy nginx `location /api/` with `/respotit/` so Open
+     WebUI's own `/api/config` is not shadowed (the "Backend Required" error);
+   - keeps `WEBUI_AUTH_TRUSTED_*` off the public `open-webui` instance and
+     points the API's trusted-header exchange at the internal `open-webui-2`;
+   - makes `OAUTH_CLIENT_SECRET` / `KEYCLOAK_CLIENT_SECRET` match the running
+     Keycloak client (or the realm export on first run);
+   - appends the local mkcert root CA to Open WebUI's CA bundle so the OIDC
+     backchannel can verify `https://localhost`;
+4. starts the stack, then bootstraps it:
+   - creates the reSpotIt MCP service account;
+   - copies the owner's Spotify link to that account on a single-user stack;
+   - generates the Open WebUI API key used by the AI assistant;
+   - registers/refreshes the reSpotIt MCP connection (38 tools);
+   - starts a library sync when a Spotify link is available;
+   - verifies the public routes, OIDC discovery, Keycloak client secret and
+     that public trusted-header auth is disabled.
+
+Pass `--no-sync` to skip the initial library sync, or `--no-verify` to skip
+the final checks.
+
+### First run
+1. Open **https://localhost/** and click Keycloak's **Register** link to create
+   your account (the realm allows self-registration).
+2. Open **http://localhost:8888**, sign in to reSpotIt, and connect Spotify.
+3. Re-run the one-click launcher (or just
+   `python scripts/bootstrap_full_stack.py`) to copy the Spotify link to the
+   MCP service account and sync the library.
+
+### Manual start
 ```bash
-# All required files (certs/, OpenWebUI-stack/) are now included.
-# Just configure .env and launch:
-cp .env.example .env   # fill in SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET
+python scripts/prepare_full_stack.py
 docker compose -f docker-compose.yml -f docker-compose.full.yml up -d --build
+python scripts/bootstrap_full_stack.py
 ```
 
 > **Note:** The full stack uses pre-generated mkcert certs for nginx/Keycloak/OpenWebUI trust. The reSpotIt API uses the same certs (mounted read-only).
@@ -108,6 +138,19 @@ This adds:
 - Redis + Redis Insight at :5540
 - reSpotIt MCP at 127.0.0.1:8091
 - Spotify MCP at 127.0.0.1:8090
+- reSpotIt API through nginx at https://localhost/respotit/
+
+### Full-stack troubleshooting
+
+| Symptom | Cause | One-click fix |
+| --- | --- | --- |
+| Open WebUI says **Backend Required** | nginx `location /api/` shadows Open WebUI's own `/api/` | `prepare_full_stack.py` replaces it with `/respotit/` |
+| **Your provider has not provided a trusted header** | `WEBUI_AUTH_TRUSTED_*` on the public instance | public instance has no trusted headers; API uses `open-webui-2` |
+| **Sign-in with your identity provider failed** | `OAUTH_CLIENT_SECRET` / `KEYCLOAK_CLIENT_SECRET` mismatch | prepare syncs both with the live Keycloak client secret |
+| OIDC callback cannot reach `https://localhost` | container does not trust the mkcert root | prepare appends `certs/ca/rootCA.pem` to the CA bundle |
+| reSpotIt MCP has no tools in Open WebUI | connection not registered | bootstrap registers it and verifies 38 tools |
+| AI assistant has no library data | service account has no Spotify link / no sync | bootstrap copies the owner's link and starts a sync |
+| `.env` lost but Postgres volumes remain | new random DB passwords | restore the old `.env`; do not delete volumes |
 
 #### Option 2: Self-contained backup workspace (recommended)
 ```bash
@@ -129,7 +172,9 @@ docker compose up -d
 
 ### Full Stack (Docker)
 ```bash
+python scripts/prepare_full_stack.py
 docker compose -f docker-compose.yml -f docker-compose.full.yml up -d
+python scripts/bootstrap_full_stack.py
 ```
 
 - Data: `./data` + Postgres volume `pg_data` (back up both)
@@ -169,6 +214,8 @@ desktop/              ← Standalone desktop app (PyInstaller)
 docs/                 ← Additional documentation
 OpenWebUI-stack/      ← nginx, keycloak realm, MCP sources (gitignored; included for full stack)
 scripts/              ← Utility scripts
+├── prepare_full_stack.py  ← idempotent pre-start repair (nginx, CA, .env)
+└── bootstrap_full_stack.py ← post-start bootstrap (MCP, sync, verification)
 
 docker-compose.yml         ← Solo stack (db, api, frontend)
 docker-compose.full.yml    ← Full stack overlay (OpenWebUI, Keycloak, MCP, etc.)
@@ -187,3 +234,4 @@ start-full-stack.sh/.bat  ← One-click deploy scripts
 - The `kotlin/` and `typescript/` folders are legacy source copies; they may drift from upstream. Current clients are in separate repositories (see links above).
 - Full stack files (`certs/`, `OpenWebUI-stack/`) are now included in this repo (gitignored). The start-full-stack script copies them from the backup workspace if missing.
 - The Open WebUI API key is auto-generated on first deploy and persisted to `/data/.owui_api_key`. No manual key creation needed.
+- The one-click launcher preserves an existing `.env`; it only fills missing or placeholder secrets. This is deliberate: changing DB passwords after the Postgres volumes exist locks the stack out.
