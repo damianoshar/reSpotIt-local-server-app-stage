@@ -438,6 +438,22 @@ _STRICTER_SUFFIX = (
     "No prose, no markdown fences, no extra text."
 )
 
+# Nudges for degenerate answers from a small local model. The caller retries
+# with these when the first answer is empty (or entirely undated) even though
+# the source text plainly contains dated events.
+_CONCERT_NUDGE_EMPTY = (
+    "\n\nIMPORTANT: this text lists real events with dates. Extract every one "
+    "of them as a separate object. Never return an empty list when dated "
+    "events are present."
+)
+
+_CONCERT_NUDGE_DATES = (
+    "\n\nIMPORTANT: every event in this text has a date next to it. Fill the "
+    '"date" field for every object as YYYY-MM-DD. When the year is missing, '
+    "infer the nearest upcoming year from the page context. Never leave "
+    '"date" empty when the text shows one.'
+)
+
 
 def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024,
                        timeout: tuple[float, float] | float | None = None) -> dict:
@@ -497,8 +513,19 @@ def extract_albums(text: str, *, token=None) -> dict:
     return {"albums": out}
 
 
-def extract_concerts(text: str, *, token=None, timeout=None) -> dict:
-    data = extract_structured(_CONCERTS_SYSTEM, text, token=token, max_tokens=4096,
+def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = None) -> dict:
+    """Extract concerts from page text.
+
+    ``mode`` is a retry hint used by the background scan: ``"empty"`` when the
+    model returned no rows for a page that clearly lists events, ``"dates"``
+    when it returned rows without any date.
+    """
+    system = _CONCERTS_SYSTEM
+    if mode == "empty":
+        system += _CONCERT_NUDGE_EMPTY
+    elif mode == "dates":
+        system += _CONCERT_NUDGE_DATES
+    data = extract_structured(system, text, token=token, max_tokens=4096,
                               timeout=timeout)
     concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []
     out = []

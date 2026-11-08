@@ -119,6 +119,18 @@ def _auto_generate_owui_key_sync():
 
 async def lifespan(_: FastAPI):
     await _run_migrations()
+    # Scan workers run inside this process, so any scan still marked "running"
+    # after a restart is orphaned and would look stuck to every client forever.
+    def _fail_orphaned() -> None:
+        from .services import concert_scan_service
+        try:
+            fixed = concert_scan_service.fail_orphaned_scans()
+            if fixed:
+                logger.warning("Marked %d interrupted concert scan(s) as failed.", fixed)
+        except Exception as e:  # never block startup
+            logger.warning("Orphaned concert-scan sweep failed: %s", e)
+
+    await asyncio.to_thread(_fail_orphaned)
     task = asyncio.create_task(_retention_loop())
     import threading
     key_thread = threading.Thread(target=_auto_generate_owui_key_sync, daemon=True)

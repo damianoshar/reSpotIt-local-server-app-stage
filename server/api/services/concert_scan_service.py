@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +36,18 @@ CHUNK_CHARS = int(os.getenv("CONCERT_SCAN_CHUNK_CHARS", "24000"))
 CHUNK_OVERLAP = int(os.getenv("CONCERT_SCAN_CHUNK_OVERLAP", "1000"))
 # Hard ceiling on fetched/stored source text (guards against huge pages).
 MAX_SOURCE_CHARS = int(os.getenv("CONCERT_SCAN_MAX_SOURCE_CHARS", "2000000"))
+
+# '"Fri, Nov 13"' / "March 30, 2027" style dates mark a page that really lists
+# events. Used to detect a degenerate model answer (all rows empty, or no rows
+# at all) that the local model occasionally produces for such pages.
+_MONTH_DATE_RE = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_events(text: str) -> bool:
+    return len(_MONTH_DATE_RE.findall(text or "")) >= 3
 
 
 def _utcnow() -> datetime:
@@ -159,6 +172,37 @@ def latest_scan(db, user_id) -> ConcertScan | None:
         .order_by(ConcertScan.created_at.desc())
         .first()
     )
+
+
+def fail_orphaned_scans(db=None) -> int:
+    """Mark scans left "running"/"queued" by a previous process as failed.
+
+    Scan workers live in the API process, so a restart (deploy, crash) leaves
+    their rows ``running`` with no worker left to finish them. Clients poll
+    ``/latest`` and would show "Scanning..." forever.
+    """
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        orphans = (
+            db.query(ConcertScan)
+            .filter(ConcertScan.status.in_(("running", "queued")))
+            .all()
+        )
+        now = _utcnow()
+        for scan in orphans:
+            scan.status = "error"
+            scan.stage = "done"
+            scan.error = "Interrupted by a server restart. Start the scan again."
+            scan.message = "Scan failed."
+            scan.updated_at = now
+        if orphans:
+            db.commit()
+        return len(orphans)
+    finally:
+        if own_session:
+            db.close()
 
 
 def delete_scan(db, user_id, scan_id: str) -> int:
@@ -333,6 +377,32 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
                 try:
                     data = llm_service.extract_concerts(
                         chunk, token=chatter.token, timeout=SCAN_LLM_TIMEOUT)
+                    chunk_items = _normalise(data)
+                    # The local model occasionally answers {"concerts": []} for a
+                    # page full of dated events (seen finishing in ~1 second).
+                    # Ask once more before reporting "no concerts".
+                    if not chunk_items and _looks_like_events(chunk):
+                        logger.warning(
+                            "Concert scan %s chunk %d returned no concerts for "
+                            "event-like text; retrying", scan_id, i)
+                        data = llm_service.extract_concerts(
+                            chunk, token=chatter.token, timeout=SCAN_LLM_TIMEOUT,
+                            mode="empty")
+                        chunk_items = _normalise(data)
+                    # Same for undated rows: the calendar needs dates, so retry
+                    # once when the text has dates but no row carries one.
+                    if (chunk_items
+                            and not any(item["date"] for item in chunk_items)
+                            and _looks_like_events(chunk)):
+                        logger.warning(
+                            "Concert scan %s chunk %d returned undated rows; "
+                            "retrying for dates", scan_id, i)
+                        data = llm_service.extract_concerts(
+                            chunk, token=chatter.token, timeout=SCAN_LLM_TIMEOUT,
+                            mode="dates")
+                        dated = _normalise(data)
+                        if any(item["date"] for item in dated):
+                            chunk_items = dated
                 except Exception as chunk_exc:
                     if len(chunks) == 1:
                         raise
@@ -340,7 +410,7 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
                     logger.warning("Concert scan %s chunk %d failed: %s",
                                    scan_id, i, chunk_exc)
                     continue
-                results.extend(_normalise(data))
+                results.extend(chunk_items)
 
             items = _dedupe(results)
 

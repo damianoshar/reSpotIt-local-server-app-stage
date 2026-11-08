@@ -325,3 +325,109 @@ def test_run_scan_records_error(Session, user):
     with Session() as db:
         row = concert_scan_service.get_scan(db, user[0], scan.id)
         assert row.status == "error" and "model exploded" in row.error
+
+
+# ── Degenerate-answer retries ─────────────────────────────────────────────────
+
+_EVENT_PAGE = (
+    "Sólstafir\nFri, Nov 13 • 9 PM\nEightball Club\n"
+    "Whiplash\nSat, Nov 14 • 8 PM\nEightball Club\n"
+    "Kovacs\nSun, Nov 15 • 9 PM\nWE\n"
+)
+
+
+def test_looks_like_events_detects_dated_pages():
+    assert concert_scan_service._looks_like_events(_EVENT_PAGE) is True
+    assert concert_scan_service._looks_like_events("no dates here at all") is False
+    assert concert_scan_service._looks_like_events("") is False
+
+
+def test_run_scan_retries_empty_answer_for_event_page(Session, user):
+    """An empty list on an obviously dated page is retried once with a nudge."""
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], url="https://example.com/events")
+
+    empty = {"concerts": []}
+    filled = {"concerts": [
+        {"artist": "Sólstafir", "date": "2026-11-13", "venue": "Eightball Club", "url": ""},
+    ]}
+    with patch("api.services.llm_service.fetch_page_text", return_value=_EVENT_PAGE), \
+         patch("api.services.llm_service.extract_concerts",
+               side_effect=[empty, filled]) as extract, \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], "https://example.com/events", None)
+
+    assert extract.call_count == 2
+    assert extract.call_args.kwargs.get("mode") == "empty"
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.status == "ready"
+        assert [i["artist"] for i in row.items] == ["Sólstafir"]
+
+
+def test_run_scan_does_not_retry_empty_answer_without_events(Session, user):
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], url="https://example.com/blog")
+
+    with patch("api.services.llm_service.fetch_page_text",
+               return_value="A blog post with no events whatsoever."), \
+         patch("api.services.llm_service.extract_concerts",
+               return_value={"concerts": []}) as extract, \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], "https://example.com/blog", None)
+
+    assert extract.call_count == 1
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.status == "ready" and row.items == []
+
+
+def test_run_scan_retries_undated_rows(Session, user):
+    """Rows without any date are retried once so the calendar stays usable."""
+    with Session() as db:
+        scan = concert_scan_service.create_scan(db, user[0], url="https://example.com/events")
+
+    undated = {"concerts": [
+        {"artist": "Sólstafir", "date": "", "venue": "Eightball Club", "url": ""},
+    ]}
+    dated = {"concerts": [
+        {"artist": "Sólstafir", "date": "2026-11-13", "venue": "Eightball Club", "url": ""},
+    ]}
+    with patch("api.services.llm_service.fetch_page_text", return_value=_EVENT_PAGE), \
+         patch("api.services.llm_service.extract_concerts",
+               side_effect=[undated, dated]) as extract, \
+         patch("api.services.openwebui_service.get_user_token", return_value=None), \
+         patch("api.services.openwebui_service.create_chat", side_effect=RuntimeError("no chat")):
+        concert_scan_service.run_scan(scan.id, user[0], "https://example.com/events", None)
+
+    assert extract.call_count == 2
+    assert extract.call_args.kwargs.get("mode") == "dates"
+    with Session() as db:
+        row = concert_scan_service.get_scan(db, user[0], scan.id)
+        assert row.items[0]["date"] == "2026-11-13"
+
+
+def test_fail_orphaned_scans_marks_running_as_error(Session, user):
+    """Scans left running by a restart must not hang clients on /latest."""
+    with Session() as db:
+        running = concert_scan_service.create_scan(db, user[0], text="x")
+        done = concert_scan_service.create_scan(db, user[0], text="y")
+        done.status = "ready"
+        done.stage = "done"
+        db.commit()
+        running_id, done_id = running.id, done.id
+
+    with Session() as db:
+        # Other tests in this module leave running rows behind too.
+        assert concert_scan_service.fail_orphaned_scans(db) >= 1
+
+    with Session() as db:
+        failed = concert_scan_service.get_scan(db, user[0], running_id)
+        assert failed.status == "error" and "restart" in failed.error
+        assert concert_scan_service.get_scan(db, user[0], done_id).status == "ready"
+
+    # Idempotent: nothing left to fail on the next startup.
+    with Session() as db:
+        assert concert_scan_service.fail_orphaned_scans(db) == 0
