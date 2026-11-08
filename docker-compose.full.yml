@@ -30,8 +30,8 @@ services:
     volumes:
       - ./docker-data/minio:/data
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
 
   create-bucket:
     image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z
@@ -39,9 +39,9 @@ services:
       - minio
     entrypoint: >
       /bin/sh -c "
-      until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin); do echo 'Waiting for MinIO...'; sleep 5; done;
-      /usr/bin/mc mb myminio/openwebui --ignore-existing;
-      /usr/bin/mc policy set public myminio/openwebui;
+      until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do echo 'Waiting for MinIO...'; sleep 5; done;
+      /usr/bin/mc mb myminio/${MINIO_BUCKET_NAME:-openwebui} --ignore-existing;
+      /usr/bin/mc policy set public myminio/${MINIO_BUCKET_NAME:-openwebui};
       echo 'Bucket created successfully';
       "
     restart: "no"
@@ -104,6 +104,8 @@ services:
     depends_on:
       - keycloak
       - openwebui-db
+      - minio
+      - redis
     ports:
       - "3000:8080"
     environment:
@@ -118,6 +120,19 @@ services:
       SSL_CERT_FILE: /etc/ssl/ca-bundle.crt
       REQUESTS_CA_BUNDLE: /etc/ssl/ca-bundle.crt
       AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL: "False"
+      # File storage via MinIO (S3-compatible) — restores the original wiring.
+      STORAGE_PROVIDER: s3
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET_NAME: ${MINIO_BUCKET_NAME:-openwebui}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION_NAME: ${MINIO_REGION:-us-east-1}
+      S3_ADDRESSING_STYLE: path
+      # Websocket sessions backed by Redis (valkey).
+      ENABLE_WEBSOCKET_SUPPORT: "true"
+      WEBSOCKET_MANAGER: redis
+      WEBSOCKET_REDIS_URL: redis://redis:6379/1
+      REDIS_KEY_PREFIX: open-webui
       ENABLE_OAUTH_SIGNUP: true
       OAUTH_PROVIDER_NAME: ${OAUTH_PROVIDER_NAME:-Keycloak}
       OPENID_PROVIDER_URL: ${OPENID_PROVIDER_URL:-https://localhost/authKeycloak/realms/open-webui/.well-known/openid-configuration}
@@ -146,6 +161,8 @@ services:
     image: ghcr.io/open-webui/open-webui:v0.13.0
     depends_on:
       - openwebui-db
+      - minio
+      - redis
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -154,6 +171,19 @@ services:
       WEBUI_AUTH: ${WEBUI_AUTH:-true}
       WEBUI_AUTH_TRUSTED_EMAIL_HEADER: X-OWUI-Trusted-Email
       WEBUI_AUTH_TRUSTED_NAME_HEADER: X-OWUI-Trusted-Name
+      # File storage via MinIO (S3-compatible) — restores the original wiring.
+      STORAGE_PROVIDER: s3
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET_NAME: ${MINIO_BUCKET_NAME:-openwebui}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION_NAME: ${MINIO_REGION:-us-east-1}
+      S3_ADDRESSING_STYLE: path
+      # Websocket sessions backed by Redis (valkey).
+      ENABLE_WEBSOCKET_SUPPORT: "true"
+      WEBSOCKET_MANAGER: redis
+      WEBSOCKET_REDIS_URL: redis://redis:6379/1
+      REDIS_KEY_PREFIX: open-webui
       ENABLE_API_KEYS: "true"
       USER_PERMISSIONS_FEATURES_API_KEYS: "true"
       BYPASS_MODEL_ACCESS_CONTROL: "true"
