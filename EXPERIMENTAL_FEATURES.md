@@ -280,6 +280,11 @@ Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add fro
       its URL to the browser and returns to the review list after the snapshot.
       Live-verified: 4/4 events extracted from a snapshot, `kind=page`,
       `source_url` preserved.
+      A Songkick city page (day-first dates) first returned 0 concerts:
+      `_looks_like_events` only matched month-first dates (`Nov 13`), so the
+      empty-answer retry never fired. The heuristic now also matches day-first
+      (`04 December 2026`) and ISO dates (`bd12649`); the same snapshot went
+      0 -> 38 concerts.
 
 Known follow-ups:
 - Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve

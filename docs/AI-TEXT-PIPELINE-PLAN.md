@@ -76,6 +76,8 @@ Persist the full source so scans are re-runnable and auditable.
   optional `source_url` form field. `create_scan(..., kind="page")` stores the
   text and keeps the URL for the scan title; the worker reads the stored source
   and never re-fetches the URL (it cannot run the page's JavaScript anyway).
+  The empty-answer retry heuristic also matches day-first dates now, which
+  Songkick-style pages need (`bd12649`).
 
 **Acceptance:** a 1 MB HTML page uploads, stores, scans, and yields a pending review list; the phone never holds the full text after upload.
 
