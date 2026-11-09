@@ -209,11 +209,17 @@ docker run --rm -v "$PWD/certs:/certs" alpine/openssl req -x509 -newkey rsa:2048
 docker compose -f docker-compose.yml -f docker-compose.full.yml restart api
 ```
 
-- **Cert trust:** both Android apps bundle this certificate at
-  `android/app/src/main/res/raw/respotit_server_cert.pem` and list it as a trust
-  anchor, so no user CA has to be installed on the phone. **Re-copy
-  `certs/server.pem` into both apps and rebuild whenever the cert is
-  regenerated**, otherwise the apps fall back to system/user CAs and fail.
+- **Cert trust:** the API cert is issued from the local development CA in
+  `certs/ca/rootCA.pem` (mkcert or a self-created CA). The Android apps trust
+  that CA:
+  - *Personal builds* (gitignored `src/personal/res/` overlay) bundle the CA at
+    `res/raw/respotit_ca.pem` -> zero-touch install.
+  - *Public/CI builds* trust only system + user CAs; the user installs the CA
+    once (Settings -> Security -> Install a certificate -> CA certificate, pick
+    `rootCA.pem`). Because the CA is stable (10 years), this install survives
+    every server cert reissue and every app update.
+  - Reissue the leaf for a new LAN IP with `scripts/local-certs.sh <ip>` and
+    restart the API container. No app rebuild needed.
 - **Port:** use `https://<pc-ip>:8000`. If Docker Desktop on Windows publishes
   port 8000 to loopback only, forward it with `lan_proxy.py`
   (`0.0.0.0:8001 → 127.0.0.1:8000`, kept in
