@@ -278,6 +278,16 @@ Known follow-ups:
   correct json" on some pages.
 - Kotlin dialogs accept URL only; React also accepts pasted text. Add paste-text
   field to Kotlin `ConcertsDialog` and `AiUrlScanDialog`.
+- **Fixed 2026-11-09** (`462aeea` + Kotlin `85d9942`): scan correlation showed
+  "0 followed" and no followed artists. `resolve_artists` paginated the whole
+  followed library (~64 serial Spotify calls for 3,183 artists) and then
+  searched the catalog for every non-followed name serially, so a 67-artist scan
+  took 65 s; the Kotlin dialog's `withTimeoutOrNull(30_000)` silently discarded
+  the result. Now followed status comes from the batched
+  `/me/following/contains` call (50 ids per request), catalog searches run
+  concurrently (8 workers), the followed list is used from a short-lived cache
+  (a cold cache is warmed in the background), and the Kotlin cap is 120 s.
+  Measured: same 4 followed of 67 in ~3.6 s cold / ~3.3 s warm.
 
 ## AI text pipeline: source archive + chunked extraction (planned)
 
