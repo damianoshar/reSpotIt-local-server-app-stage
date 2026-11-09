@@ -5,7 +5,7 @@
 # when the PC gets a new LAN IP only the leaf is reissued here. Nothing has to be
 # rebuilt or reinstalled on the phone.
 #
-# The CA is the mkcert one already in certs/ca/ (rootCA.pem + rootCA-key.pem) —
+# The CA is the mkcert one already in certs/ca/ (rootCA.pem + rootCA-key.pem) ???
 # the same root the phone has installed. If it is missing, a local CA is created.
 #
 # Usage:
