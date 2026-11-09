@@ -195,6 +195,33 @@ python scripts/bootstrap_full_stack.py
 - **HTTPS:** Auto-generated self-signed certs (solo) or mkcert (full stack)
 - **AI assistant:** Open WebUI API key auto-generated on first deploy
 
+### LAN / phone access
+
+The Android clients reach the server over HTTPS on the LAN, so the cert must
+cover the PC's LAN IP.
+
+```bash
+# Regenerate certs/server.pem with the current LAN IPs in the SAN list.
+# Replace 192.168.1.11 with the PC's address (ipconfig / Get-NetIPAddress).
+docker run --rm -v "$PWD/certs:/certs" alpine/openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout /certs/server-key.pem -out /certs/server.pem -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,DNS:api,IP:127.0.0.1,IP:192.168.1.11"
+docker compose -f docker-compose.yml -f docker-compose.full.yml restart api
+```
+
+- **Cert trust:** both Android apps bundle this certificate at
+  `android/app/src/main/res/raw/respotit_server_cert.pem` and list it as a trust
+  anchor, so no user CA has to be installed on the phone. **Re-copy
+  `certs/server.pem` into both apps and rebuild whenever the cert is
+  regenerated**, otherwise the apps fall back to system/user CAs and fail.
+- **Port:** use `https://<pc-ip>:8000`. If Docker Desktop on Windows publishes
+  port 8000 to loopback only, forward it with `lan_proxy.py`
+  (`0.0.0.0:8001 → 127.0.0.1:8000`, kept in
+  `%LOCALAPPDATA%\reSpotIt\lan_proxy.py` and started from the user's Startup
+  folder) and use `https://<pc-ip>:8001` instead.
+- **Firewall:** allow inbound TCP on the chosen port for the Public profile
+  (`netsh advfirewall firewall add rule name="reSpotIt API 8001" dir=in action=allow protocol=TCP localport=8001`).
+
 ---
 
 ## 📁 Project Layout
