@@ -37,11 +37,15 @@ CHUNK_OVERLAP = int(os.getenv("CONCERT_SCAN_CHUNK_OVERLAP", "1000"))
 # Hard ceiling on fetched/stored source text (guards against huge pages).
 MAX_SOURCE_CHARS = int(os.getenv("CONCERT_SCAN_MAX_SOURCE_CHARS", "2000000"))
 
-# '"Fri, Nov 13"' / "March 30, 2027" style dates mark a page that really lists
-# events. Used to detect a degenerate model answer (all rows empty, or no rows
-# at all) that the local model occasionally produces for such pages.
+# '"Fri, Nov 13"' / "March 30, 2027" / "Friday 04 December 2026" style dates
+# mark a page that really lists events. Used to detect a degenerate model answer
+# (all rows empty, or no rows at all) that the local model occasionally produces
+# for such pages. Day-first dates matter: Songkick renders "Friday 04 December
+# 2026", and a month-first-only pattern silently disabled the retry there.
 _MONTH_DATE_RE = re.compile(
-    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b",
+    r"(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b"
+    r"|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b"
+    r"|\b\d{4}-\d{2}-\d{2}\b)",
     re.IGNORECASE,
 )
 

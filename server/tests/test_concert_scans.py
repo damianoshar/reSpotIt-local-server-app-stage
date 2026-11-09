@@ -378,6 +378,22 @@ def test_looks_like_events_detects_dated_pages():
     assert concert_scan_service._looks_like_events("") is False
 
 
+_DAY_FIRST_PAGE = (
+    "Friday 04 December 2026\n\nKovacs\n\nWE, Thessaloníki, Greece\n\n"
+    "Sunday 06 December 2026\n\nNouvelle Vague\n\nWE, Thessaloníki, Greece\n\n"
+    "Monday 01 February 2027\n\nAndrea Vanzo\n\nRoyal Theatre\n"
+)
+
+
+def test_looks_like_events_detects_day_first_and_iso_dates():
+    # Songkick renders day-first dates ("Friday 04 December 2026"). A
+    # month-first-only pattern missed them, so a page full of events skipped the
+    # empty-answer retry and the scan finished with 0 concerts.
+    assert concert_scan_service._looks_like_events(_DAY_FIRST_PAGE) is True
+    iso = "2026-12-04 Gagarin 205\n2026-12-05 Fuzz Club\n2026-12-10 Kyttaro"
+    assert concert_scan_service._looks_like_events(iso) is True
+
+
 def test_run_scan_retries_empty_answer_for_event_page(Session, user):
     """An empty list on an obviously dated page is retried once with a nudge."""
     with Session() as db:
