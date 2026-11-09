@@ -296,6 +296,21 @@ Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add fro
       pending-review list. `npm run build` + `cap sync android` +
       `compileDebugJavaWithJavac` pass in both repos; release APKs built,
       on-device tap-through not yet repeated on the React builds.
+- [x] Recent searches + saved links (React main, React librespot, Kotlin,
+      2026-11-09). Each page/URL entry point now keeps a device-local history:
+      **Concerts** (scan concerts), **Albums** (scan page with AI and pasted
+      Spotify links) and **Add from site**. Recent entries are recorded when a
+      scan starts (newest first, de-duplicated, capped at 8) and can be
+      re-applied with one tap; **Save link** pins a value to a 40-entry list
+      with an inline remove control. Pasted text is stored as text and labelled
+      by its first line, URLs by host + path. React stores in `localStorage`
+      (`respotit.linkHistory.v1.<bucket>`, `src/services/linkHistory.ts`) with a
+      pub/sub so an open dialog refreshes; Kotlin stores JSON in
+      `SharedPreferences` (`link_history_v1`, `LinkHistoryStore`) with a Compose
+      `LinkHistoryBus` write counter. Kotlin uses one `albums` bucket because
+      its `AiUrlScanDialog` serves both the AI scan and the pasted-links mode.
+      Unit tests cover de-duplication, caps, bucket isolation, corrupt storage
+      and subscriber notification (12 tests).
 
 Known follow-ups:
 - Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve
