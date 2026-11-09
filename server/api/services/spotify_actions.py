@@ -4,8 +4,12 @@ services/spotify_actions.py
 Playlist and queue operations against the Spotify Web API.
 """
 
-import time
+import hashlib
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import requests
 
 BASE = "https://api.spotify.com/v1"
@@ -416,8 +420,8 @@ def get_player_queue(token: str) -> dict:
 # Phase 0 helpers for AI URL scan features
 # ---------------------------------------------------------------------------
 
-def get_followed_artists(token: str) -> list[dict]:
-    """Return the user's followed Spotify artists (paginated)."""
+def _fetch_followed_artists(token: str) -> list[dict]:
+    """Paginate /me/following for every artist the user follows."""
     artists: list[dict] = []
     url = "/me/following"
     params = {"type": "artist", "limit": 50}
@@ -442,6 +446,99 @@ def get_followed_artists(token: str) -> list[dict]:
         if url and not url.startswith("http"):
             url = f"{BASE}{url}"
     return artists
+
+
+# /me/following is cursor-paginated: a user with 3,000+ artists costs ~64 serial
+# Spotify calls. resolve_artists runs on every AI scan, so cache the list briefly
+# to keep correlation fast (a warm scan then resolves in seconds, not a minute).
+_FOLLOWED_TTL_SECONDS = 300.0
+_followed_cache: dict[str, tuple[float, list[dict]]] = {}
+_warming: set[str] = set()
+_followed_cache_lock = threading.Lock()
+
+
+def _followed_key(token: str) -> str:
+    # Key by a hash of the bearer token so we never store a live credential.
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()[:32]
+
+
+def get_followed_artists(token: str) -> list[dict]:
+    """Return the user's followed Spotify artists (paginated, short-lived cache)."""
+    key = _followed_key(token)
+    now = time.time()
+    with _followed_cache_lock:
+        cached = _followed_cache.get(key)
+        if cached and now - cached[0] < _FOLLOWED_TTL_SECONDS:
+            return cached[1]
+    artists = _fetch_followed_artists(token)
+    with _followed_cache_lock:
+        _followed_cache[key] = (time.time(), artists)
+        if len(_followed_cache) > 8:
+            oldest = min(_followed_cache, key=lambda k: _followed_cache[k][0])
+            _followed_cache.pop(oldest, None)
+    return artists
+
+
+def invalidate_followed_artists(token: str | None = None) -> None:
+    """Drop the followed-artists cache (all users, or one token's entry)."""
+    with _followed_cache_lock:
+        if token is None:
+            _followed_cache.clear()
+        else:
+            _followed_cache.pop(_followed_key(token), None)
+
+
+def _cached_followed_artists(token: str) -> list[dict] | None:
+    """The cached followed list, or None when cold (never triggers pagination)."""
+    with _followed_cache_lock:
+        hit = _followed_cache.get(_followed_key(token))
+    if hit and time.time() - hit[0] < _FOLLOWED_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
+def _warm_followed_artists(token: str) -> None:
+    """Refresh the followed-artists cache in the background (best effort)."""
+    key = _followed_key(token)
+    with _followed_cache_lock:
+        if key in _warming:
+            return  # a warm is already in flight for this token
+        _warming.add(key)
+
+    def run() -> None:
+        try:
+            get_followed_artists(token)
+        except Exception:
+            pass  # warming is opportunistic; the caller already answered
+        finally:
+            with _followed_cache_lock:
+                _warming.discard(key)
+
+    threading.Thread(target=run, daemon=True, name="followed-warm").start()
+
+
+def _followed_contains(token: str, artist_ids: list[str]) -> set[str]:
+    """Authoritative check: which of these artist ids does the user follow?
+
+    /me/following/contains takes 50 ids per call, so a scan page costs one or
+    two calls instead of paginating the whole followed list.
+    """
+    ids = [i for i in dict.fromkeys(artist_ids) if i]
+    followed: set[str] = set()
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            flags = _request(
+                "GET", token, "/me/following/contains",
+                params={"type": "artist", "ids": ",".join(chunk)},
+            ).json()
+        except Exception:
+            continue
+        if isinstance(flags, list):
+            for j, flag in enumerate(flags):
+                if flag:
+                    followed.add(chunk[j])
+    return followed
 
 
 def _best_album_match(albums: list[dict], artist: str, album: str) -> dict | None:
@@ -523,20 +620,73 @@ def _normalize_artist_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
+def _search_artist_candidates(token: str, name: str, limit: int = 5) -> list[dict]:
+    """Artist-only catalog search (lighter than the combined artist+album search)."""
+    try:
+        data = _get(token, "/search", params={"q": name, "type": "artist", "limit": limit})
+    except Exception:
+        return []
+    artists = []
+    for artist in (data.get("artists") or {}).get("items") or []:
+        if not isinstance(artist, dict):
+            continue
+        images = artist.get("images") or []
+        artists.append({
+            "id": artist.get("id"),
+            "name": artist.get("name") or "Unknown artist",
+            "image_url": (images[0].get("url") if images else "") or "",
+            "genres": artist.get("genres") or [],
+            "followers": (artist.get("followers") or {}).get("total", 0),
+        })
+    return artists
+
+
 def resolve_artists(token: str, names: list[str]) -> dict:
-    """Resolve artist names to Spotify IDs, preferring the user's followed artists."""
-    followed = get_followed_artists(token)
+    """Resolve artist names to Spotify IDs, preferring the user's followed artists.
+
+    Fast by design: the followed list is used only from cache (a cold cache is
+    warmed in the background), and followed status for catalog matches comes from
+    the batched /me/following/contains call instead of paginating every followed
+    artist. A scan page therefore resolves in seconds, not a minute.
+    """
+    cleaned = [str(raw or "").strip() for raw in (names or [])]
+    cleaned = [n for n in cleaned if n]
+
+    followed = _cached_followed_artists(token)
+    if followed is None:
+        _warm_followed_artists(token)  # do not block this request on pagination
+        followed = []
     followed_ids = {a.get("id") for a in followed if a.get("id")}
     followed_by_norm: dict[str, dict] = {}
     for a in followed:
         if a.get("id"):
             followed_by_norm.setdefault(_normalize_artist_name(a.get("name")), a)
+
+    # Names already matched by the cached followed list need no catalog lookup;
+    # everything else needs an id so we can ask /me/following/contains. Searches
+    # are concurrent because a page can carry 60+ distinct names.
+    search_names = list(dict.fromkeys(
+        n for n in cleaned if _normalize_artist_name(n) not in followed_by_norm
+    ))
+    candidates: dict[str, list[dict]] = {}
+    if search_names:
+        workers = min(8, len(search_names))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for name, found in zip(
+                    search_names,
+                    pool.map(lambda n: _search_artist_candidates(token, n), search_names)):
+                candidates[name] = found
+
+    matches: dict[str, dict] = {}
+    for name in search_names:
+        match = _best_artist_match(candidates.get(name) or [], name)
+        if match and match.get("id"):
+            matches[name] = match
+    contains = _followed_contains(token, [m["id"] for m in matches.values()])
+
     resolved = []
     unresolved = []
-    for raw in names or []:
-        name = str(raw or "").strip()
-        if not name:
-            continue
+    for name in cleaned:
         # 1) Correlate directly against the followed list first (source of truth).
         f = followed_by_norm.get(_normalize_artist_name(name))
         if f:
@@ -549,14 +699,9 @@ def resolve_artists(token: str, names: list[str]) -> dict:
                 "followed": True,
             })
             continue
-        # 2) Fall back to a catalog search for artists the user does not follow.
-        try:
-            data = search_spotify_catalog(token, name, limit=5)
-        except Exception:
-            data = {"artists": []}
-        artists = (data or {}).get("artists") or []
-        match = _best_artist_match(artists, name)
-        if match and match.get("id"):
+        # 2) Catalog match, with followed status confirmed by /me/following/contains.
+        match = matches.get(name)
+        if match:
             aid = match.get("id")
             resolved.append({
                 "name": name,
@@ -564,7 +709,7 @@ def resolve_artists(token: str, names: list[str]) -> dict:
                 "matched_name": match.get("name") or name,
                 "image_url": match.get("image_url") or "",
                 "genres": match.get("genres") or [],
-                "followed": aid in followed_ids,
+                "followed": aid in contains or aid in followed_ids,
             })
         else:
             unresolved.append(name)
