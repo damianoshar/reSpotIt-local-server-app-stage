@@ -124,5 +124,72 @@ class ResolveArtistsTests(unittest.TestCase):
         self.assertLess(elapsed, 1.2)
 
 
+    def test_greek_names_normalize_to_distinct_non_empty_keys(self):
+        # Regression: the old [a-z0-9] filter folded every Greek name to "".
+        greek = spotify_actions._normalize_artist_name("Σοφία Μανουσάκη")
+        other = spotify_actions._normalize_artist_name("Κρατική Ορχήστρα Θεσσαλονίκης")
+        self.assertTrue(greek)
+        self.assertTrue(other)
+        self.assertNotEqual(greek, other)
+
+    def test_greek_followed_artist_matches_across_case_and_accents(self):
+        followed = [_followed("g1", "Σοφία Μανουσάκη")]
+        with patch.object(spotify_actions, "_cached_followed_artists", return_value=followed), \
+             patch.object(spotify_actions, "_search_artist_candidates",
+                          side_effect=AssertionError("search must not run for followed")):
+            out = spotify_actions.resolve_artists("token", ["ΣΟΦΙΑ ΜΑΝΟΥΣΑΚΗ", "Σοφια Μανουσακη"])
+
+        self.assertEqual(len(out["resolved"]), 2)
+        self.assertTrue(all(r["followed"] for r in out["resolved"]))
+        self.assertTrue(all(r["spotify_id"] == "g1" for r in out["resolved"]))
+        self.assertEqual(out["unresolved"], [])
+
+    def test_unrelated_greek_name_does_not_inherit_a_followed_artist(self):
+        # Regression: with the empty-key collision every Greek name resolved to
+        # the first Greek followed artist.
+        followed = [_followed("g1", "Σοφία Μανουσάκη"), _followed("a1", "Radiohead")]
+        with patch.object(spotify_actions, "_cached_followed_artists", return_value=followed), \
+             patch.object(spotify_actions, "_followed_contains", return_value=set()), \
+             patch.object(spotify_actions, "_search_artist_candidates", return_value=[]):
+            out = spotify_actions.resolve_artists("token", ["Κρατική Ορχήστρα Θεσσαλονίκης"])
+
+        self.assertEqual(out["resolved"], [])
+        self.assertEqual(out["unresolved"], ["Κρατική Ορχήστρα Θεσσαλονίκης"])
+
+    def test_best_match_ignores_accents_for_non_latin_names(self):
+        candidates = [_candidate("x1", "Σοφία Μανουσάκη"), _candidate("x2", "Other")]
+        match = spotify_actions._best_artist_match(candidates, "ΣΟΦΙΑ ΜΑΝΟΥΣΑΚΗ")
+        self.assertEqual(match["id"], "x1")
+
+    def test_best_match_transliterates_greek_to_latin(self):
+        candidates = [_candidate("x1", "Sofia Manousaki"), _candidate("x2", "Other")]
+        match = spotify_actions._best_artist_match(candidates, "Σοφία Μανουσάκη")
+        self.assertEqual(match["id"], "x1")
+        self.assertEqual(
+            spotify_actions._best_artist_match([_candidate("m1", "Mple")], "Μπλε")["id"],
+            "m1",
+        )
+
+    def test_best_match_rejects_an_unrelated_first_result(self):
+        # Regression: the old fallback returned artists[0], so a Greek orchestra
+        # name resolved to whatever Spotify ranked first (e.g. "Mple").
+        candidates = [_candidate("m1", "Mple"), _candidate("m2", "Mple Live")]
+        self.assertIsNone(
+            spotify_actions._best_artist_match(candidates, "Κρατική Ορχήστρα Θεσσαλονίκης")
+        )
+
+    def test_unrelated_catalog_hit_is_reported_unresolved_not_mismatched(self):
+        def search(token, name, limit=5):
+            return [_candidate("m1", "Mple")]
+
+        with patch.object(spotify_actions, "_cached_followed_artists", return_value=[]), \
+             patch.object(spotify_actions, "_followed_contains", return_value=set()), \
+             patch.object(spotify_actions, "_search_artist_candidates", side_effect=search):
+            out = spotify_actions.resolve_artists("token", ["Άγριο Μέλι"])
+
+        self.assertEqual(out["resolved"], [])
+        self.assertEqual(out["unresolved"], ["Άγριο Μέλι"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -429,6 +429,12 @@ _CONCERTS_SYSTEM = (
     '{"concerts": [["artist", "YYYY-MM-DD or empty", "venue"], ...]}. '
     "Each concert is a 3-item ARRAY, not an object: artist first, then date, "
     "then venue. Never add other keys or a url. Keep the JSON compact. "
+    "Rules: 'artist' is the performer or band only - never an event title, "
+    "festival name, tribute, recital or benefit concert. If an entry names no "
+    "performer, skip it. Keep every name in the page's original language and "
+    "script: do not translate, transliterate or invent names. 'venue' is the "
+    "place only, without the city. Infer the year from the page when it is "
+    "clear; otherwise leave the date empty. "
     "No prose, no markdown fences. "
     "If none found, return {\"concerts\": []}."
 )

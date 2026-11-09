@@ -8,6 +8,7 @@ import hashlib
 import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -606,18 +607,67 @@ def resolve_albums(token: str, items: list) -> dict:
 
 
 def _best_artist_match(artists: list[dict], name: str) -> dict | None:
-    name_l = (name or "").strip().lower()
+    """Return the catalog artist that really is `name`, else None.
+
+    Matching is deliberately strict (same folded name, or the same name in the
+    other script via transliteration). Spotify's search returns *something* for
+    almost any query, so falling back to the first result used to map Greek
+    event titles onto random artists. Unresolved is better than wrong.
+    """
+    wanted = set(_artist_keys(name))
+    if not wanted:
+        return None
     for a in artists:
-        if not isinstance(a, dict):
-            continue
-        if (a.get("name") or "").strip().lower() == name_l:
+        if isinstance(a, dict) and wanted.intersection(_artist_keys(a.get("name"))):
             return a
-    return artists[0] if artists and isinstance(artists[0], dict) else None
+    return None
 
 
 def _normalize_artist_name(name: str) -> str:
-    """Lowercase and strip punctuation so names/titles correlate reliably."""
-    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+    """Fold a name to a comparable key that works for every script.
+
+    NFKD + casefold removes case and accent differences (Σοφία / ΣΟΦΙΑ / Σοφια
+    all collapse), and keeping only alphanumerics drops punctuation and spaces.
+    Unlike the old [a-z0-9] filter this preserves Greek, Cyrillic, CJK, etc.
+    and never collapses a non-Latin name to an empty key.
+    """
+    folded = unicodedata.normalize("NFKD", (name or "")).casefold()
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return "".join(ch for ch in folded if ch.isalnum())
+
+
+# Greek -> Latin, so "Σοφία Μανουσάκη" can match Spotify's "Sofia Manousaki"
+# and "Μπλε" can match "Mple". Accents are already gone after NFKD.
+_GREEK_LATIN = str.maketrans({
+    "α": "a", "β": "v", "γ": "g", "δ": "d", "ε": "e", "ζ": "z", "η": "i",
+    "θ": "th", "ι": "i", "κ": "k", "λ": "l", "μ": "m", "ν": "n", "ξ": "x",
+    "ο": "o", "π": "p", "ρ": "r", "σ": "s", "ς": "s", "τ": "t", "υ": "y",
+    "φ": "f", "χ": "ch", "ψ": "ps", "ω": "o",
+})
+# υ is transliterated both ways in artist names ("Manousaki" vs "Myrto"), so
+# both variants are compared.
+_GREEK_LATIN_ALT = {**_GREEK_LATIN, ord("υ"): "u"}
+
+
+def _latin_key(name: str, table) -> str:
+    folded = unicodedata.normalize("NFKD", (name or "")).casefold()
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return "".join(ch for ch in folded.translate(table) if ch.isalnum())
+
+
+def _transliterate_key(name: str) -> str:
+    """Latin fallback key for names written in Greek."""
+    return _latin_key(name, _GREEK_LATIN)
+
+
+def _artist_keys(name: str) -> tuple[str, ...]:
+    """Every comparable key for a name (native script + Latin transliterations)."""
+    keys = (
+        _normalize_artist_name(name),
+        _latin_key(name, _GREEK_LATIN),
+        _latin_key(name, _GREEK_LATIN_ALT),
+    )
+    return tuple(dict.fromkeys(k for k in keys if k))
 
 
 def _search_artist_candidates(token: str, name: str, limit: int = 5) -> list[dict]:
@@ -659,14 +709,21 @@ def resolve_artists(token: str, names: list[str]) -> dict:
     followed_ids = {a.get("id") for a in followed if a.get("id")}
     followed_by_norm: dict[str, dict] = {}
     for a in followed:
-        if a.get("id"):
-            followed_by_norm.setdefault(_normalize_artist_name(a.get("name")), a)
+        if not a.get("id"):
+            continue
+        # Index both the native-script and transliterated keys, and never index
+        # the empty key: names that fold to nothing would all collide.
+        for key in _artist_keys(a.get("name")):
+            followed_by_norm.setdefault(key, a)
 
     # Names already matched by the cached followed list need no catalog lookup;
     # everything else needs an id so we can ask /me/following/contains. Searches
     # are concurrent because a page can carry 60+ distinct names.
+    def _is_followed_match(value: str) -> bool:
+        return any(k in followed_by_norm for k in _artist_keys(value))
+
     search_names = list(dict.fromkeys(
-        n for n in cleaned if _normalize_artist_name(n) not in followed_by_norm
+        n for n in cleaned if not _is_followed_match(n)
     ))
     candidates: dict[str, list[dict]] = {}
     if search_names:
@@ -688,7 +745,7 @@ def resolve_artists(token: str, names: list[str]) -> dict:
     unresolved = []
     for name in cleaned:
         # 1) Correlate directly against the followed list first (source of truth).
-        f = followed_by_norm.get(_normalize_artist_name(name))
+        f = next((followed_by_norm[k] for k in _artist_keys(name) if k in followed_by_norm), None)
         if f:
             resolved.append({
                 "name": name,
