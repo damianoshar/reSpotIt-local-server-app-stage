@@ -285,6 +285,17 @@ Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add fro
       empty-answer retry never fired. The heuristic now also matches day-first
       (`04 December 2026`) and ISO dates (`bd12649`); the same snapshot went
       0 -> 38 concerts.
+- [x] WebView page snapshot -> concert scan (React main + librespot, 2026-11-09).
+      Same flow in the Capacitor builds: the native `AddFromSite` plugin takes
+      `mode: 'concerts'` (button reads **Scan concerts**, no Spotify-link
+      detection, no auto-scan on page load) and resolves `{ids, url, text,
+      cancelled}` after evaluating `document.body.innerText`. The JS bridge adds
+      `openConcertPageSnapshot`; `ConcertsDialog` shows **Open in browser and
+      scan** only in the native app, uploads the captured text through
+      `uploadRemoteConcertScan(base, file, sourceUrl)` and returns to the
+      pending-review list. `npm run build` + `cap sync android` +
+      `compileDebugJavaWithJavac` pass in both repos; release APKs built,
+      on-device tap-through not yet repeated on the React builds.
 
 Known follow-ups:
 - Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve

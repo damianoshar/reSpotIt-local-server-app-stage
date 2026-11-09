@@ -78,6 +78,9 @@ Persist the full source so scans are re-runnable and auditable.
   and never re-fetches the URL (it cannot run the page's JavaScript anyway).
   The empty-answer retry heuristic also matches day-first dates now, which
   Songkick-style pages need (`bd12649`).
+  The React main and librespot builds use the same native `AddFromSite` plugin
+  in `mode: 'concerts'` (a **Scan concerts** button inside the in-app browser),
+  so all three clients send the identical `source_url` + text payload.
 
 **Acceptance:** a 1 MB HTML page uploads, stores, scans, and yields a pending review list; the phone never holds the full text after upload.
 
