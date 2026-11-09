@@ -269,6 +269,18 @@ Entry points (React Settings/Tools): "Scan page with AI (albums)", "Scan concert
 "View concerts calendar", "Add albums from a website" (native WebView, Spotify links only).
 Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add from site".
 
+- [x] WebView page snapshot -> concert scan (Kotlin, 2026-11-09). The "Add from
+      site" browser gained **Scan this page for concerts (AI)**: it evaluates
+      `document.body.innerText` on the *rendered* page and uploads that text
+      through the existing multipart path with a new optional `source_url` form
+      field (`source_kind=page`). This is the only way to scan JS-rendered
+      listings (Bandsintown etc.), which a server-side fetch sees as empty. The
+      server never re-fetches `source_url`; it only labels the scan. The
+      concerts dialog gained "Open in browser and scan the page", which hands
+      its URL to the browser and returns to the review list after the snapshot.
+      Live-verified: 4/4 events extracted from a snapshot, `kind=page`,
+      `source_url` preserved.
+
 Known follow-ups:
 - Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve
   routes, which Retrofit rejects ("parameter type must not include a type variable
@@ -276,8 +288,9 @@ Known follow-ups:
 - Backend `extract_structured` calls the LLM once; plan edge case (retry once with
   stricter prompt on non-JSON) is not implemented. Causes "model did not return
   correct json" on some pages.
-- Kotlin dialogs accept URL only; React also accepts pasted text. Add paste-text
-  field to Kotlin `ConcertsDialog` and `AiUrlScanDialog`.
+- ~~Kotlin dialogs accept URL only; React also accepts pasted text.~~ Fixed: Kotlin
+  `ConcertsDialog` now has a paste field (pasted text uploads as a `.txt` file)
+  and an attach-file button; `AiUrlScanDialog` keeps URL-only.
 - **Fixed 2026-11-09** (`462aeea` + Kotlin `85d9942`): scan correlation showed
   "0 followed" and no followed artists. `resolve_artists` paginated the whole
   followed library (~64 serial Spotify calls for 3,183 artists) and then

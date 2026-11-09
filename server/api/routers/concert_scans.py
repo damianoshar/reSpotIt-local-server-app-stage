@@ -12,7 +12,7 @@ Click-and-forget AI concert scans (docs/STORAGE-POLICY.md).
 The scan runs in the background; the client can close immediately and read the
 results later from ``/latest``. All user-scoped via ``get_current_user``.
 """
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from ..contract import ContractError
@@ -51,6 +51,7 @@ def start_scan(
 async def upload_scan(
     background: BackgroundTasks,
     file: UploadFile = File(...),
+    source_url: str = Form(""),
     db:   Session = Depends(get_db),
     user: User    = Depends(get_current_user),
 ):
@@ -65,7 +66,16 @@ async def upload_scan(
     text = text.strip()
     if not text:
         raise ContractError(422, "llm_empty_input", "The uploaded file is empty.")
-    scan = concert_scan_service.create_scan(db, str(user.id), text=text, kind="file")
+    # A WebView page snapshot is uploaded as text, but the page it came from is
+    # still useful for the scan title/links. The server must never fetch this
+    # URL: the client already rendered it and its text is the source of truth.
+    page_url = (source_url or "").strip()
+    if page_url and not page_url.lower().startswith(("http://", "https://")):
+        page_url = ""
+    scan = concert_scan_service.create_scan(
+        db, str(user.id), url=page_url or None, text=text,
+        kind="page" if page_url else "file",
+    )
     background.add_task(
         concert_scan_service.run_scan, scan.id, str(user.id), None, None,
     )

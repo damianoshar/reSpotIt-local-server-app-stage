@@ -3,7 +3,7 @@
 **Status:** Phases 1–5 implemented (2026-11-08); Phase 6 (RAG Q&A) planned.
 **Tracking:** Kanso board 11, card 565 (work), card 507 (LLM feature)
 **Scope:** `reSpotIt-local-server-app` only. `/api/v1` stays additive.
-**Last updated:** 2026-11-08
+**Last updated:** 2026-11-09
 
 > **Implemented** in `841f356` (server: source archive + chunked extraction +
 > upload) and `487fcb7` (compose: MinIO S3 + Redis websockets). Live-verified:
@@ -11,6 +11,10 @@
 > returned 3 concerts, an HTML upload stored stripped text (`kind=file`) and
 > returned 1 concert, the `openwebui` bucket exists in MinIO, and Redis holds
 > `open-webui:*` keys. 134 server tests pass.
+>
+> **2026-11-09:** WebView page snapshots upload the same way with an optional
+> `source_url` form field (`source_kind=page`), so JS-rendered listings that a
+> server-side fetch cannot see are scannable from the phone. See §3.
 
 ---
 
@@ -67,6 +71,11 @@ Persist the full source so scans are re-runnable and auditable.
 - Keep JSON `POST /api/v1/concert-scans` for small pastes (backwards compatible).
 - React + Kotlin: allow attaching a text/HTML file in the concerts scan dialog; show the stored size and chunk count.
 - Keep the MCP/`api` container request-body limit in mind; uploads go through the API, not OpenWebUI.
+- **WebView page snapshots (2026-11-09):** the Kotlin in-app browser uploads
+  `document.body.innerText` from the rendered page as a `.txt` file with an
+  optional `source_url` form field. `create_scan(..., kind="page")` stores the
+  text and keeps the URL for the scan title; the worker reads the stored source
+  and never re-fetches the URL (it cannot run the page's JavaScript anyway).
 
 **Acceptance:** a 1 MB HTML page uploads, stores, scans, and yields a pending review list; the phone never holds the full text after upload.
 

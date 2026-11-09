@@ -293,7 +293,7 @@ def _normalise(data: dict) -> list[dict]:
 
 
 def _title_for(scan: ConcertScan) -> str:
-    if scan.source_kind == "url" and scan.source_url:
+    if scan.source_kind in ("url", "page") and scan.source_url:
         return f"Concert scan: {scan.source_url}"
     if scan.source_kind == "file":
         return "Concert scan: uploaded file"

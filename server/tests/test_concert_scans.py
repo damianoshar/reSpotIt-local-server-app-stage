@@ -266,6 +266,42 @@ def test_upload_scan_creates_file_scan(client, user, Session):
     worker.assert_called_once()
 
 
+def test_upload_scan_with_source_url_records_a_page_snapshot(client, user, Session):
+    """A WebView snapshot uploads text but keeps the page URL it came from."""
+    with patch.object(concert_scan_service, "run_scan") as worker:
+        r = client.post(
+            "/api/v1/concert-scans/upload",
+            files={"file": ("page-snapshot.txt", b"Napalm Death 2026-07-01 Gagarin", "text/plain")},
+            data={"source_url": "https://www.bandsintown.com/c/athens"},
+            headers=_auth(user),
+        )
+    assert r.status_code == 202
+    body = r.json()
+    assert body["source_kind"] == "page"
+    assert body["source_url"] == "https://www.bandsintown.com/c/athens"
+    with Session() as db:
+        src = concert_scan_service.get_source(db, user[0], body["source_id"])
+        assert "Napalm Death" in src.content
+        assert src.source_url == "https://www.bandsintown.com/c/athens"
+    # The client already rendered the page: the worker must not re-fetch it.
+    args = worker.call_args.args
+    assert args[2] is None and args[3] is None
+
+
+def test_upload_scan_with_bad_source_url_falls_back_to_a_file_scan(client, user):
+    with patch.object(concert_scan_service, "run_scan"):
+        r = client.post(
+            "/api/v1/concert-scans/upload",
+            files={"file": ("concerts.txt", b"Radiohead O2", "text/plain")},
+            data={"source_url": "not a url"},
+            headers=_auth(user),
+        )
+    assert r.status_code == 202
+    body = r.json()
+    assert body["source_kind"] == "file"
+    assert body["source_url"] == ""
+
+
 # ── Background worker ─────────────────────────────────────────────────────────
 
 def test_run_scan_stores_items_and_streams_progress(Session, user):
