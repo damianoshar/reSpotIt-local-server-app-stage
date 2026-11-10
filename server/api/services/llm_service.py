@@ -421,6 +421,9 @@ _ALBUMS_SYSTEM = (
     "You are a data extractor. Given the text of a web page, extract every album "
     "mentioned (artist + album title). Return ONLY valid JSON with this exact shape: "
     '{"albums": [{"artist": "...", "album": "..."}]}. No prose, no markdown fences. '
+    "Use only the album title and its artist: ignore chart ranks, position changes "
+    "(\"up 13 from 57th\"), review scores, prices and other table text around them. "
+    "Keep names in the page's original language and script. "
     "If none found, return {\"albums\": []}."
 )
 
