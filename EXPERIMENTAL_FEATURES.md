@@ -311,6 +311,40 @@ Kotlin: Tools tab -> "Scan page with AI (albums)", "Concerts calendar", "Add fro
       its `AiUrlScanDialog` serves both the AI scan and the pasted-links mode.
       Unit tests cover de-duplication, caps, bucket isolation, corrupt storage
       and subscriber notification (12 tests).
+- [x] WebView page snapshot -> **album** scan (Kotlin, 2026-11-10). The "Add from
+      site" browser gained a second snapshot button, **Scan this page for albums
+      (AI)**, next to the concert one. The album scan dialog gained **Open in
+      browser and scan**: it hands its URL to the browser and returns to the
+      dialog with the typed URL preserved (`albumScanUrl` hoisted in
+      `DashboardScreen.kt`, `417fc2b`). The snapshot evaluates
+      `document.body.innerText` on the *rendered* page and posts it to
+      `POST /api/v1/llm/extract-albums` — the same path the concert scan uses,
+      so JS-rendered charts work without a server-side fetch.
+- [x] Same flow for the React clients (main + librespot, 2026-11-10). The native
+      `AddFromSite` plugin takes `mode: 'page'`; `AiUrlScanDialog` calls
+      `openAlbumPageSnapshot`. `tsc --noEmit` clean, 72 vitest tests green, debug +
+      release APKs built in both repos.
+- [x] Long album pages are chunked server-side (2026-11-10). `extract_albums`
+      splits the page into 24,000-char chunks with 1,000-char overlap
+      (`ALBUM_SCAN_CHUNK_CHARS` / `ALBUM_SCAN_CHUNK_OVERLAP`, env-overridable) and
+      de-duplicates the pairs case-insensitively (`5faaebb`). The album prompt now
+      ignores chart ranks, position text, scores and vote counts so titles stay
+      clean (`6611f59`). Live check: a 24.5 k-char page -> 2 chunks -> 30 clean
+      `(artist, album)` pairs. `/api/v1` unchanged — chunking and prompt wording
+      are server internals, so every client inherits the fix.
+- [x] On-device verification (Kotlin release APK, 2026-11-10). APK SHA-256
+      `6C568E9EEED930C90146D3AABEF65A06202865D17F05D7DC7523E9648807B9B4`
+      installed on the Xiaomi 2201117PG; the installed `base.apk` matches the
+      built artifact byte-for-byte. Flow: Tools -> "Scan page with AI (albums)" ->
+      recent URL -> "Open in browser and scan" -> "Scan this page for albums (AI)".
+      Server side: `extract-albums` 200 -> `resolve-albums` 200 -> `import/csv`
+      200, with the LLM returning 50 clean `(artist, album)` pairs for the
+      Sputnikmusic 2026 chart; the dialog came back with the URL preserved.
+      Kotlin LLM calls use a dedicated client with a 15-minute read timeout
+      (`73fd8c6`) because the extraction is synchronous and chunked — the previous
+      60 s timeout aborted the request. The library count did not grow on that
+      run because those albums were already in the server library (12,488 albums),
+      so `import/csv` upserted instead of inserting.
 
 Known follow-ups:
 - Kotlin `DashboardApiService` uses `@Body Map<String, Any>` for the extract/resolve
@@ -355,6 +389,11 @@ phases:
 - [ ] **Optional RAG Q&A** — index `scan_sources` into the existing Chroma
       (`all-MiniLM-L6-v2`) for a cross-source "ask my sources" feature with
       citations. Retrieval is only for Q&A, *not* for extraction.
+- [x] **Album extraction chunking** — `extract_albums` chunks long pages
+      (24,000 chars / 1,000 overlap, env-overridable) and de-duplicates the pairs
+      case-insensitively (`5faaebb`, 2026-11-10). The `scan_sources` archive and
+      the per-chunk progress UI are still **concert-only**; an album scan is one
+      synchronous request whose result arrives with the whole page.
 
 RAG is deliberately not used for extraction: top-k retrieval drops events when
 the query is generic. Chunked extraction preserves recall.
