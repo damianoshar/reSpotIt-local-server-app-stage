@@ -178,6 +178,19 @@ class ResolveArtistsTests(unittest.TestCase):
             spotify_actions._best_artist_match(candidates, "Κρατική Ορχήστρα Θεσσαλονίκης")
         )
 
+    def test_best_match_accepts_greek_final_sigma_against_latin_spelling(self):
+        # "Τόνι Σφήνος" (page) vs "Tonis Sfinos" (Spotify): the nominative -s
+        # is missing in the Greek accusative, so the keys must compare words
+        # without a trailing s.
+        candidates = [_candidate("t1", "Tonis Sfinos"), _candidate("t2", "Other")]
+        match = spotify_actions._best_artist_match(candidates, "Τόνι Σφήνος")
+        self.assertEqual(match["id"], "t1")
+
+    def test_word_keys_do_not_merge_different_names(self):
+        self.assertIsNone(
+            spotify_actions._best_artist_match([_candidate("p1", "Παιδί Τραύμα")], "Παιδί")
+        )
+
     def test_unrelated_catalog_hit_is_reported_unresolved_not_mismatched(self):
         def search(token, name, limit=5):
             return [_candidate("m1", "Mple")]

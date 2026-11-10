@@ -177,5 +177,47 @@ class LLMServiceTests(unittest.TestCase):
                 llm_service.list_models()
 
 
+class ExtractConcertsTests(unittest.TestCase):
+    """Lineup splitting: one row per performer, never a wrong split."""
+
+    def test_lineup_with_plus_becomes_two_rows(self):
+        self.assertEqual(
+            llm_service._split_lineup("The Gangtet + Vivid Arc"),
+            ["The Gangtet", "Vivid Arc"],
+        )
+
+    def test_lineup_with_dashes_becomes_separate_performers(self):
+        self.assertEqual(
+            llm_service._split_lineup("Toni Sfinos - Antonella - The Playmates"),
+            ["Toni Sfinos", "Antonella", "The Playmates"],
+        )
+
+    def test_ampersand_names_are_left_alone(self):
+        # Splitting these would resolve "Simon" and "Garfunkel" separately.
+        self.assertEqual(
+            llm_service._split_lineup("Simon & Garfunkel"), ["Simon & Garfunkel"]
+        )
+        self.assertEqual(
+            llm_service._split_lineup("Earth, Wind & Fire"), ["Earth, Wind & Fire"]
+        )
+
+    def test_single_artist_is_unchanged(self):
+        self.assertEqual(llm_service._split_lineup("Napalm Death"), ["Napalm Death"])
+        self.assertEqual(llm_service._split_lineup("Jay-Z"), ["Jay-Z"])
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_extract_concerts_splits_a_lineup_row(self, structured):
+        structured.return_value = {
+            "concerts": [["The Gangtet + Vivid Arc", "2026-11-20", "Polychoros Soul skg"]]
+        }
+
+        out = llm_service.extract_concerts("page text")
+
+        self.assertEqual([c["artist"] for c in out["concerts"]],
+                         ["The Gangtet", "Vivid Arc"])
+        self.assertTrue(all(c["date"] == "2026-11-20" for c in out["concerts"]))
+        self.assertTrue(all(c["venue"] == "Polychoros Soul skg" for c in out["concerts"]))
+
+
 if __name__ == "__main__":
     unittest.main()

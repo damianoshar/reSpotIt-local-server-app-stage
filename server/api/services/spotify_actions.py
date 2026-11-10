@@ -655,9 +655,30 @@ def _latin_key(name: str, table) -> str:
     return "".join(ch for ch in folded.translate(table) if ch.isalnum())
 
 
-def _transliterate_key(name: str) -> str:
-    """Latin fallback key for names written in Greek."""
-    return _latin_key(name, _GREEK_LATIN)
+def _folded_words(name: str) -> list[str]:
+    """Accent- and case-insensitive words, punctuation turned into separators."""
+    folded = unicodedata.normalize("NFKD", (name or "")).casefold()
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = "".join(ch if ch.isalnum() else " " for ch in folded)
+    return folded.split()
+
+
+def _word_key(name: str, table) -> str:
+    """Word-aligned transliterated key with a tolerance for the Greek final -s.
+
+    Greek pages write names in the accusative ("Τόνι Σφήνος") while Spotify
+    keeps the nominative Latin spelling ("Tonis Sfinos"). Comparing words
+    without their trailing s keeps those together without merging unrelated
+    names, because the word boundaries still have to line up.
+    """
+    words = []
+    for word in _folded_words(name):
+        latin = word.translate(table)
+        if len(latin) > 2 and latin.endswith("s"):
+            latin = latin[:-1]
+        if latin:
+            words.append(latin)
+    return " ".join(words)
 
 
 def _artist_keys(name: str) -> tuple[str, ...]:
@@ -666,6 +687,8 @@ def _artist_keys(name: str) -> tuple[str, ...]:
         _normalize_artist_name(name),
         _latin_key(name, _GREEK_LATIN),
         _latin_key(name, _GREEK_LATIN_ALT),
+        _word_key(name, _GREEK_LATIN),
+        _word_key(name, _GREEK_LATIN_ALT),
     )
     return tuple(dict.fromkeys(k for k in keys if k))
 

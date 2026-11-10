@@ -429,12 +429,15 @@ _CONCERTS_SYSTEM = (
     '{"concerts": [["artist", "YYYY-MM-DD or empty", "venue"], ...]}. '
     "Each concert is a 3-item ARRAY, not an object: artist first, then date, "
     "then venue. Never add other keys or a url. Keep the JSON compact. "
-    "Rules: 'artist' is the performer or band only - never an event title, "
-    "festival name, tribute, recital or benefit concert. If an entry names no "
-    "performer, skip it. Keep every name in the page's original language and "
-    "script: do not translate, transliterate or invent names. 'venue' is the "
-    "place only, without the city. Infer the year from the page when it is "
-    "clear; otherwise leave the date empty. "
+    "Rules: 'artist' is the specific performer or band only - never an event "
+    "title, festival name, tribute, recital or benefit concert. When an entry "
+    "has no named performer (for example 'Concert of Baroque Music' or 'A "
+    "concert for Children'), skip that entry entirely: do not copy the event "
+    "title into 'artist' and do not cut a name down to a single generic word. "
+    "Keep every name in the page's original language and script: do not "
+    "translate, transliterate or invent names. 'venue' is the place only, "
+    "without the city. Infer the year from the page when it is clear; "
+    "otherwise leave the date empty. "
     "No prose, no markdown fences. "
     "If none found, return {\"concerts\": []}."
 )
@@ -463,6 +466,28 @@ _CONCERT_NUDGE_DATES = (
     "infer the nearest upcoming year from the page context. Never leave the "
     "date empty when the text shows one."
 )
+
+# Separators that unambiguously mean "several performers on one bill".
+# "&", "and" and "," are deliberately absent: they are part of single artist
+# names too (Simon & Garfunkel, Earth, Wind & Fire), and a wrong split would
+# resolve each half separately.
+_LINEUP_SEPARATORS = (" + ", " / ", " - ", " – ", " | ")
+
+
+def _split_lineup(artist: str) -> list[str]:
+    """Split "A + B" / "A - B" lineups into individual performers."""
+    parts = [artist]
+    for sep in _LINEUP_SEPARATORS:
+        parts = [chunk for part in parts for chunk in part.split(sep)]
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        name = part.strip(" ,;·•")
+        if not name or name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        cleaned.append(name)
+    return cleaned or [artist]
 
 
 def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024,
@@ -545,21 +570,27 @@ def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = 
     for c in concerts:
         if isinstance(c, dict):
             # Legacy object shape (and anything the model improvises).
-            out.append({
+            row = {
                 "artist": str(c.get("artist") or "").strip(),
                 "date": str(c.get("date") or "").strip(),
                 "venue": str(c.get("venue") or "").strip(),
                 "url": str(c.get("url") or "").strip(),
-            })
+            }
         elif isinstance(c, (list, tuple)):
             # Compact [artist, date, venue] row: far fewer generated tokens
             # (~12 vs ~30 per concert), which is the scan's real bottleneck.
             vals = [str(v).strip() if v is not None else "" for v in c]
             vals += [""] * (3 - len(vals))
-            out.append({
+            row = {
                 "artist": vals[0],
                 "date": vals[1],
                 "venue": vals[2],
                 "url": "",
-            })
+            }
+        else:
+            continue
+        # A lineup ("A + B", "A - B") is one event with several performers;
+        # each performer becomes its own row so it can correlate on its own.
+        for artist in _split_lineup(row["artist"]):
+            out.append({**row, "artist": artist})
     return {"concerts": out}
