@@ -219,5 +219,74 @@ class ExtractConcertsTests(unittest.TestCase):
         self.assertTrue(all(c["venue"] == "Polychoros Soul skg" for c in out["concerts"]))
 
 
+class ExtractAlbumsTests(unittest.TestCase):
+    """Album extraction must survive a long WebView snapshot."""
+
+    def test_split_for_extraction_overlaps_and_covers(self):
+        text = "x" * 100
+        chunks = llm_service._split_for_extraction(text, 40, 10)
+        self.assertEqual(len(chunks), 3)
+        self.assertTrue(all(len(c) <= 40 for c in chunks))
+        self.assertEqual(chunks[0][-10:], chunks[1][:10])
+        # The final window ends at the end of the source: nothing is dropped.
+        self.assertEqual(chunks[-1], text[60:])
+
+    def test_split_for_extraction_short_is_single(self):
+        self.assertEqual(llm_service._split_for_extraction("short", 40, 10), ["short"])
+        self.assertEqual(llm_service._split_for_extraction("", 40, 10), [])
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_long_text_is_extracted_in_chunks_and_deduped(self, structured):
+        # Two windows, each repeating one album because of the overlap.
+        structured.side_effect = [
+            {"albums": [{"artist": "Portishead", "album": "Dummy"}]},
+            {"albums": [
+                {"artist": "portishead", "album": "dummy"},
+                {"artist": "Massive Attack", "album": "Mezzanine"},
+            ]},
+        ]
+        text = "a" * (llm_service.ALBUM_CHUNK_CHARS + 500)
+
+        out = llm_service.extract_albums(text)
+
+        self.assertEqual(len(structured.call_args_list), 2)
+        self.assertEqual(
+            out["albums"],
+            [
+                {"artist": "Portishead", "album": "Dummy"},
+                {"artist": "Massive Attack", "album": "Mezzanine"},
+            ],
+        )
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_short_text_is_one_call(self, structured):
+        structured.return_value = {"albums": [{"artist": "A", "album": "B"}]}
+
+        out = llm_service.extract_albums("short page")
+
+        self.assertEqual(len(structured.call_args_list), 1)
+        self.assertEqual(structured.call_args.args[1], "short page")
+        self.assertEqual(out["albums"], [{"artist": "A", "album": "B"}])
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_failed_chunk_is_skipped_but_kept_others(self, structured):
+        structured.side_effect = [
+            llm_service.LLMTimeout("slow"),
+            {"albums": [{"artist": "A", "album": "B"}]},
+        ]
+        text = "a" * (llm_service.ALBUM_CHUNK_CHARS + 500)
+
+        out = llm_service.extract_albums(text)
+
+        self.assertEqual(out["albums"], [{"artist": "A", "album": "B"}])
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_single_chunk_failure_raises(self, structured):
+        structured.side_effect = llm_service.LLMTimeout("slow")
+
+        with self.assertRaises(llm_service.LLMTimeout):
+            llm_service.extract_albums("short page")
+
+
 if __name__ == "__main__":
     unittest.main()

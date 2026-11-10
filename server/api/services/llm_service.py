@@ -551,16 +551,57 @@ def extract_structured(system: str, user_text: str, *, token=None, max_tokens: i
         ) from exc
 
 
+# Album extraction runs over long WebView snapshots, so it is chunked like the
+# concert scan: overlapping windows keep the model inside its context limit.
+ALBUM_CHUNK_CHARS = int(os.getenv("ALBUM_SCAN_CHUNK_CHARS", "24000"))
+ALBUM_CHUNK_OVERLAP = int(os.getenv("ALBUM_SCAN_CHUNK_OVERLAP", "1000"))
+
+
+def _split_for_extraction(text: str, size: int, overlap: int) -> list[str]:
+    """Overlapping windows so a long page never exceeds the model context."""
+    text = text or ""
+    if size <= 0 or len(text) <= size:
+        return [text] if text else []
+    step = max(1, size - max(0, overlap))
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start:start + size])
+        if start + size >= len(text):
+            break
+        start += step
+    return chunks
+
+
 def extract_albums(text: str, *, token=None) -> dict:
-    data = extract_structured(_ALBUMS_SYSTEM, text, token=token, max_tokens=4096)
-    albums = data.get("albums") if isinstance(data.get("albums"), list) else []
-    out = []
-    for a in albums:
-        if isinstance(a, dict):
-            out.append({
-                "artist": str(a.get("artist") or "").strip(),
-                "album": str(a.get("album") or "").strip(),
-            })
+    """Extract (artist, album) pairs, chunking long pages like the concert scan.
+
+    A WebView snapshot of an album list can be tens of thousands of characters;
+    one call would silently truncate it at the model's context limit, so long
+    text is extracted chunk by chunk and merged.
+    """
+    chunks = _split_for_extraction(text, ALBUM_CHUNK_CHARS, ALBUM_CHUNK_OVERLAP)
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for index, chunk in enumerate(chunks):
+        try:
+            data = extract_structured(_ALBUMS_SYSTEM, chunk, token=token, max_tokens=4096)
+        except LLMError:
+            if len(chunks) == 1:
+                raise
+            logger.warning("Album scan chunk %d failed; skipping it", index)
+            continue
+        albums = data.get("albums") if isinstance(data.get("albums"), list) else []
+        for a in albums:
+            if not isinstance(a, dict):
+                continue
+            artist = str(a.get("artist") or "").strip()
+            album = str(a.get("album") or "").strip()
+            key = (artist.casefold(), album.casefold())
+            if not (artist or album) or key in seen:
+                continue
+            seen.add(key)
+            out.append({"artist": artist, "album": album})
     return {"albums": out}
 
 
