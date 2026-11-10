@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import date
 from typing import Any, Iterable
 
 from . import mcp_service
@@ -467,6 +468,21 @@ _CONCERT_NUDGE_DATES = (
     "date empty when the text shows one."
 )
 
+# Event pages keep a stale year in the header ("... στη Θεσσαλονίκη 2025") long
+# after the listed events rolled over, and a local model copies it. Telling the
+# model today's date keeps the year right in the first place; the scan service
+# also rolls a slipped year forward after extraction.
+def _today_nudge(today: date | None = None) -> str:
+    today = today or date.today()
+    return (
+        f"\n\n---\n\nToday is {today.isoformat()}. A year printed in the page "
+        "header is often out of date. When an event's year is missing or has "
+        "already passed, use the nearest year that puts the date in the future "
+        "(15 November on a page titled 2025, read in 2026, is 2026-11-15). "
+        "Never drop an event because its printed year looks past."
+    )
+
+
 # Separators that unambiguously mean "several performers on one bill".
 # "&", "and" and "," are deliberately absent: they are part of single artist
 # names too (Simon & Garfunkel, Earth, Wind & Fire), and a wrong split would
@@ -556,13 +572,14 @@ def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = 
     when it returned rows without any date.
     """
     system = _CONCERTS_SYSTEM
-    prompt = text
-    # The nudge goes on the user message so the cached system+page prefix
-    # survives the retry (llama.cpp reuses the prompt cache by prefix).
+    # The nudges go on the user message so the cached system+page prefix
+    # survives the retry (llama.cpp reuses the prompt cache by prefix). The
+    # page text stays first, so the prefix is still cacheable.
+    prompt = text + _today_nudge()
     if mode == "empty":
-        prompt = text + _CONCERT_NUDGE_EMPTY
+        prompt += _CONCERT_NUDGE_EMPTY
     elif mode == "dates":
-        prompt = text + _CONCERT_NUDGE_DATES
+        prompt += _CONCERT_NUDGE_DATES
     data = extract_structured(system, prompt, token=token, max_tokens=4096,
                               timeout=timeout)
     concerts = data.get("concerts") if isinstance(data.get("concerts"), list) else []

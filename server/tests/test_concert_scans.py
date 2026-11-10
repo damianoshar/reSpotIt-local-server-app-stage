@@ -5,6 +5,7 @@ extraction are mocked. Endpoint tests patch the background worker so the
 TestClient's synchronous background execution never reaches the network.
 """
 import os
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -502,7 +503,49 @@ def test_extract_concerts_nudge_keeps_system_prompt_cached():
     with patch("api.services.llm_service.extract_structured",
                return_value={"concerts": []}) as es:
         llm_service.extract_concerts("PAGE")
-    assert es.call_args.args[1] == "PAGE", "no-mode call must pass the text unchanged"
+    # The page text stays first so the prefix is cacheable; only a short
+    # suffix (today's date) is appended.
+    prompt = es.call_args.args[1]
+    assert prompt.startswith("PAGE")
+    assert "Today is" in prompt[len("PAGE"):]
+    assert len(prompt) - len("PAGE") < 400
+
+
+def test_today_nudge_warns_about_a_stale_header_year():
+    from api.services import llm_service
+
+    nudge = llm_service._today_nudge(date(2026, 11, 10))
+    assert "Today is 2026-11-10" in nudge
+    assert "header is often out of date" in nudge
+    # Must not read as "skip past events": the model dropped every row once.
+    assert "Never drop an event" in nudge
+
+
+def test_roll_past_dates_moves_a_stale_year_forward():
+    """The page header said 2025, so the model dated November 2025 events."""
+    items = [
+        {"artist": "Slow Pilot", "date": "2025-11-16", "venue": "Megaro", "url": ""},
+        {"artist": "Napalm Death", "date": "2025-11-26", "venue": "WE", "url": ""},
+    ]
+    out = concert_scan_service._roll_past_dates(items, today=date(2026, 11, 10))
+    assert [c["date"] for c in out] == ["2026-11-16", "2026-11-26"]
+
+
+def test_roll_past_dates_keeps_future_and_old_dates():
+    items = [
+        {"artist": "Future", "date": "2026-12-01", "venue": "X", "url": ""},
+        {"artist": "Archive", "date": "2019-11-16", "venue": "Y", "url": ""},
+        {"artist": "Undated", "date": "", "venue": "Z", "url": ""},
+        {"artist": "Bad", "date": "16/11/2025", "venue": "W", "url": ""},
+    ]
+    out = concert_scan_service._roll_past_dates(items, today=date(2026, 11, 10))
+    assert [c["date"] for c in out] == ["2026-12-01", "2019-11-16", "", "16/11/2025"]
+
+
+def test_roll_past_dates_handles_leap_day():
+    items = [{"artist": "Leap", "date": "2024-02-29", "venue": "X", "url": ""}]
+    out = concert_scan_service._roll_past_dates(items, today=date(2025, 1, 5))
+    assert out[0]["date"] == "2025-02-28"
 
 
 def test_fail_orphaned_scans_marks_running_as_error(Session, user):

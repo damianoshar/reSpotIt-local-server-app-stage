@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from ..database import SessionLocal
 from ..models import ConcertScan, ScanSource, User
@@ -95,6 +95,38 @@ def _dedupe(items: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(c)
     return out
+
+
+def _roll_past_dates(items: list[dict], today: date | None = None) -> list[dict]:
+    """Move year-inference slips into the future ("15 Νοέ" listed in a 2025 page).
+
+    Event pages keep a stale year in their header long after the events roll
+    over, and the local model copies it, so a scan in November 2026 came back
+    dated 2025. A date that is less than a year in the past is therefore moved
+    to its nearest upcoming occurrence. Older dates are left alone: they are
+    archive entries, not a year slip.
+    """
+    today = today or _utcnow().date()
+    for item in items:
+        raw = (item.get("date") or "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if parsed >= today or (today - parsed).days > 366:
+            continue
+        candidate = parsed
+        for _ in range(8):
+            try:
+                candidate = candidate.replace(year=candidate.year + 1)
+            except ValueError:  # 29 February
+                candidate = candidate.replace(year=candidate.year + 1, day=28)
+            if candidate >= today:
+                break
+        item["date"] = candidate.isoformat()
+    return items
 
 
 def _store_source(db, user_id, *, kind: str, content: str, source_url: str = "") -> ScanSource:
@@ -416,7 +448,7 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
                     continue
                 results.extend(chunk_items)
 
-            items = _dedupe(results)
+            items = _roll_past_dates(_dedupe(results))
 
             scan.items = items
             scan.status = "ready"
