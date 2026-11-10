@@ -501,12 +501,99 @@ def _split_lineup(artist: str) -> list[str]:
     cleaned: list[str] = []
     seen: set[str] = set()
     for part in parts:
-        name = part.strip(" ,;·•")
-        if not name or name.casefold() in seen:
-            continue
-        seen.add(name.casefold())
-        cleaned.append(name)
+        for name in _split_comma_and_lineup(part):
+            name = name.strip(" ,;·•")
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            cleaned.append(name)
     return cleaned or [artist]
+
+
+# A fragment that starts with one of these words continues the previous name
+# instead of naming a new performer ("Florence and the Machine").
+_CONTINUATION_WORDS = ("the", "a", "an")
+
+
+def _split_top_level(text: str) -> list[tuple[str, str]]:
+    """Split on top-level commas and " and ".
+
+    Returns ``(fragment, separator)`` pairs; the separator is "," or "and"
+    for every fragment except the last one. Parenthesised text is never split.
+    """
+    out: list[tuple[str, str]] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    lowered = text.lower()
+    pending = ""
+    while index < len(text):
+        char = text[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        if depth == 0 and char == ",":
+            out.append(("".join(current), pending))
+            current = []
+            pending = ","
+            index += 1
+            continue
+        if depth == 0 and lowered.startswith(" and ", index):
+            if "".join(current).strip():
+                out.append(("".join(current), pending))
+                current = []
+                pending = "and"
+            # An oxford list ("A, B, and C") leaves the "and" in front of the
+            # last name: drop it instead of emitting an empty fragment.
+            index += 5
+            continue
+        current.append(char)
+        index += 1
+    out.append(("".join(current), pending))
+    return out
+
+
+def _split_comma_and_lineup(artist: str) -> list[str]:
+    """Split "A, B, and C" / "A and B" into individual performers.
+
+    Conservative on purpose: an ampersand, a lowercase article and a
+    "Tyler, The Creator"-style comma both mean the whole string is one
+    artist name, so the split is refused and the name is kept intact.
+    """
+    if "&" in artist:
+        # "Simon & Garfunkel", "Earth, Wind & Fire" are single artist names.
+        return [artist]
+    parts = _split_top_level(artist)
+    if len(parts) < 2:
+        return [artist]
+    cleaned: list[str] = []
+    for index, (fragment, separator) in enumerate(parts):
+        name = fragment.strip(" ,;·•")
+        if not name or len(name) < 2:
+            return [artist]
+        if index > 0:
+            first = name.split()[0]
+            word = first.strip(".,").lower()
+            if first.islower() and word in _CONTINUATION_WORDS:
+                # "Florence and the Machine" continues the previous name.
+                return [artist]
+            if separator == "," and word in _CONTINUATION_WORDS:
+                # "Tyler, The Creator" is one artist.
+                return [artist]
+        cleaned.append(name)
+    return cleaned
+
+
+def _strip_venue_suffix(artist: str, venue: str) -> str:
+    """Drop a venue the model glued onto the artist ("Kiya Tabassian Westerkerk")."""
+    if not artist or not venue or len(venue) < 4:
+        return artist
+    if artist.casefold().endswith(venue.casefold()):
+        trimmed = artist[: len(artist) - len(venue)].strip(" ,;·-")
+        if trimmed:
+            return trimmed
+    return artist
 
 
 def extract_structured(system: str, user_text: str, *, token=None, max_tokens: int = 1024,
@@ -652,6 +739,7 @@ def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = 
             continue
         # A lineup ("A + B", "A - B") is one event with several performers;
         # each performer becomes its own row so it can correlate on its own.
-        for artist in _split_lineup(row["artist"]):
+        artist = _strip_venue_suffix(row["artist"], row["venue"])
+        for artist in _split_lineup(artist):
             out.append({**row, "artist": artist})
     return {"concerts": out}

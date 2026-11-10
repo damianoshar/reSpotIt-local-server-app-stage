@@ -205,6 +205,49 @@ class ExtractConcertsTests(unittest.TestCase):
         self.assertEqual(llm_service._split_lineup("Napalm Death"), ["Napalm Death"])
         self.assertEqual(llm_service._split_lineup("Jay-Z"), ["Jay-Z"])
 
+    def test_comma_list_becomes_one_row_per_artist(self):
+        # The model returns the whole bill in one field.
+        self.assertEqual(
+            llm_service._split_lineup("Bloc Party, Interpol, and Heartworms"),
+            ["Bloc Party", "Interpol", "Heartworms"],
+        )
+        self.assertEqual(
+            llm_service._split_lineup("Yazmin Lacey, Jembaa Groove, SML, and Amy Gadiaga"),
+            ["Yazmin Lacey", "Jembaa Groove", "SML", "Amy Gadiaga"],
+        )
+
+    def test_and_lineup_becomes_two_rows(self):
+        self.assertEqual(
+            llm_service._split_lineup("Lynnic and Its Arius"),
+            ["Lynnic", "Its Arius"],
+        )
+        self.assertEqual(
+            llm_service._split_lineup("Antonella and The Playmates"),
+            ["Antonella", "The Playmates"],
+        )
+        self.assertEqual(
+            llm_service._split_lineup("Mantra Machine and Cervus (NL)"),
+            ["Mantra Machine", "Cervus (NL)"],
+        )
+
+    def test_names_that_look_like_a_list_are_left_alone(self):
+        # A wrong split would resolve half a name on its own.
+        self.assertEqual(
+            llm_service._split_lineup("Tyler, The Creator"), ["Tyler, The Creator"]
+        )
+        self.assertEqual(
+            llm_service._split_lineup("Florence and the Machine"), ["Florence and the Machine"]
+        )
+
+    def test_venue_glued_to_the_artist_is_dropped(self):
+        self.assertEqual(
+            llm_service._strip_venue_suffix("Kiya Tabassian Westerkerk", "Westerkerk"),
+            "Kiya Tabassian",
+        )
+        self.assertEqual(
+            llm_service._strip_venue_suffix("Maxwell Owin", "Bimhuis"), "Maxwell Owin"
+        )
+
     @patch("api.services.llm_service.extract_structured")
     def test_extract_concerts_splits_a_lineup_row(self, structured):
         structured.return_value = {
@@ -217,6 +260,28 @@ class ExtractConcertsTests(unittest.TestCase):
                          ["The Gangtet", "Vivid Arc"])
         self.assertTrue(all(c["date"] == "2026-11-20" for c in out["concerts"]))
         self.assertTrue(all(c["venue"] == "Polychoros Soul skg" for c in out["concerts"]))
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_extract_concerts_splits_a_comma_bill(self, structured):
+        structured.return_value = {
+            "concerts": [["Bloc Party, Interpol, and Heartworms", "2026-11-17", "AFAS Live"]]
+        }
+
+        out = llm_service.extract_concerts("page text")
+
+        self.assertEqual([c["artist"] for c in out["concerts"]],
+                         ["Bloc Party", "Interpol", "Heartworms"])
+        self.assertTrue(all(c["venue"] == "AFAS Live" for c in out["concerts"]))
+
+    @patch("api.services.llm_service.extract_structured")
+    def test_extract_concerts_drops_a_venue_glued_to_the_artist(self, structured):
+        structured.return_value = {
+            "concerts": [["Kiya Tabassian Westerkerk", "2026-11-23", "Westerkerk"]]
+        }
+
+        out = llm_service.extract_concerts("page text")
+
+        self.assertEqual([c["artist"] for c in out["concerts"]], ["Kiya Tabassian"])
 
 
 class ExtractAlbumsTests(unittest.TestCase):
