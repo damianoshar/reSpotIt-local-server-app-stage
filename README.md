@@ -230,36 +230,131 @@ docker compose -f docker-compose.yml -f docker-compose.full.yml restart api
 
 ---
 
+## 🔑 Environment variables
+
+`.env` lives at the repo root (`.env.example` documents every key — 56 in total). The most important ones:
+
+| Group | Keys |
+|---|---|
+| Spotify | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `REDIRECT_URI`, `PUBLIC_BASE_URL` |
+| Server | `SSL_ENABLED`, `CORS_ALLOW_ORIGIN`, `FORWARDED_ALLOW_IPS` |
+| Database | `DATABASE_URL` (default `postgresql://spotify:spotify@127.0.0.1:5433/spotify`) |
+| Keycloak / OIDC | `KEYCLOAK_ENABLED`, `KEYCLOAK_REALM`, `KEYCLOAK_HOSTNAME`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD`, `OPENID_PROVIDER_URL`, `OPENID_REDIRECT_URI`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_SCOPES`, `OAUTH_PROVIDER_NAME`, `OAUTH_AUTO_SIGNUP`, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`, `ENABLE_OAUTH_SIGNUP` |
+| Open WebUI | `WEBUI_AUTH`, `WEBUI_SECRET_KEY`, `DEFAULT_USER_ROLE`, `OPENWEBUI_DB_*`, `OPENWEBUI_URL`, `OPENWEBUI_TRUSTED_AUTH`, `OPENWEBUI_TRUSTED_HEADER`, `OPENWEBUI_TRUSTED_NAME_HEADER`, `OPENAI_API_BASE_URL`, `OPENAI_API_KEY` |
+| MCP | `MCP_API_KEY`, `MCP_TOOLS`, `RESPOTIT_MCP_*`, `SPOTIFY_MCP_URL`, `SPOTIFY_MCP_TOKEN` |
+| MinIO / Redis | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET_NAME`, `MINIO_REGION` |
+| Telemetry | `SCARF_NO_ANALYTICS`, `DO_NOT_TRACK`, `ANONYMIZED_TELEMETRY` |
+
+> **Secrets:** `.env`, `certs/`, `OpenWebUI-stack/` and `data/` are gitignored. Never commit DB passwords, Keycloak client secrets, the Open WebUI API key (`/data/.owui_api_key`) or MCP tokens. The one-click launcher deliberately **preserves** an existing `.env` — changing the DB password after the Postgres volume exists locks the stack out.
+
+---
+
+## 🧪 Tests & CI
+
+```bash
+# Backend (FastAPI, pytest)
+cd server
+pip install -r requirements.api.txt -r requirements-dev.txt
+python -m pytest tests -q            # 13 test files
+
+# Frontend (Vite + verification scripts)
+cd server/frontend
+npm ci
+npm run build
+npm run verify:local                 # local-mode + pipeline + render + CSS-build checks
+```
+
+Backend test files cover concerts and hidden albums, concert scans, CSV import (replace mode), Keycloak auth, LLM chats and the chunked LLM extraction service, the MCP service, the phase-0 endpoints, playlist actions, artist resolution, retention, Spotify token import and user auth.
+
+CI (`.github/workflows/release.yml`, triggers on `v*` tags or manual dispatch):
+
+| Step | What it does |
+|---|---|
+| Build frontend | `npm install` → `npm run build` → `npm run verify:local` in `server/frontend` |
+| Install Python deps | `requirements.api.txt` + `requirements-dev.txt` + `desktop/requirements.txt` |
+| Run tests | `python -m pytest tests -q` in `server` |
+| Build desktop exe | `pyinstaller spotify-dashboard.spec --noconfirm` |
+| Package release | `reSpotIt-Windows.zip` + `SHA256SUMS.txt` |
+| Publish | GitHub release with the zip and the checksum file |
+
+---
+
+## 🩺 Solo-stack troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Browser shows a cert warning | Self-signed certificate (solo mode) | Accept it, or set `SSL_ENABLED=false` in `.env` for plain HTTP |
+| Container exits at once | Port already in use (8000/8888/5433) | `docker compose ps`, then free the port or change the published port |
+| "password authentication failed for user" | `.env` DB password changed after the volume was created | Restore the previous `.env`; do **not** delete `docker-data/postgres` |
+| Library empty after a sync | Spotify account has no saved albums, or the job was cancelled | Open the sync panel for the stage log; `GET /api/v1/sync/history` |
+| Android client cannot reach the API | Cert does not cover the LAN IP, or the port is not published | Reissue the leaf with the LAN IP in the SAN list; `scripts/lan-expose.ps1`; firewall rule |
+| AI assistant disabled | No Open WebUI API key yet | The key is auto-generated on first deploy and stored at `/data/.owui_api_key`; re-run `scripts/bootstrap_full_stack.py` |
+| Frontend builds but the API 404s | Wrong base URL / proxy prefix | Solo: the API is at `https://127.0.0.1:8000`; full stack: `/respotit/` (nginx) |
+| Migration mismatch after pulling | New migration file not applied | Apply `server/migrations/*.sql` in order; the API runs them on start |
+
+---
+
+## 🏷️ Versioning & changelog
+
+- Release tags in this repo: `v0.1`, `v0.1.1`, `v1.0`, `v1.1`, `v1.2`, `v1.3`, `v1.4`.
+- Tagging `v*` runs the release workflow and publishes `reSpotIt-Windows.zip` + `SHA256SUMS.txt`.
+- Per-feature notes live in the commit history (`git log --oneline`); AI feature status is tracked in `EXPERIMENTAL_FEATURES.md`.
+
+---
+
 ## 📁 Project Layout
 
 ```
 server/                ← Python backend (FastAPI) + React frontend (Vite) + Docker
-├── app/              ← FastAPI application
-│   ├── api/          ← /api/v1 routes (albums, playlists, sync, stats, MCP, LLM)
-│   ├── core/         ← Config, security, database
-│   ├── models/       ← SQLAlchemy models
-│   ├── schemas/      ← Pydantic DTOs
-│   └── services/     ← Business logic (Spotify, sync, CSV, images, LLM, Keycloak)
-├── web/              ← React frontend (Vite)
-├── docker-compose.yml
-└── Dockerfile
+├── api/              ← FastAPI application
+│   ├── main.py       ← App factory, router registration, Open WebUI key bootstrap
+│   ├── config.py     ← Settings (env-driven)
+│   ├── database.py   ← SQLAlchemy engine/session
+│   ├── models.py     ← SQLAlchemy models
+│   ├── schemas.py    ← Pydantic DTOs
+│   ├── contract.py   ← Frozen /api/v1 contract helpers
+│   ├── scoping.py    ← Per-user data scoping
+│   ├── job_store.py  ← In-memory job registry
+│   ├── routers/      ← /api/v1 routes (16 routers, see below)
+│   └── services/     ← Business logic (Spotify, sync, CSV, images, LLM, MCP, Keycloak)
+├── frontend/         ← React/Vite frontend (PlayerView.jsx = Web Playback SDK)
+│   ├── src/          ← React sources
+│   └── scripts/      ← verify-local-mode / verify-pipeline / render-check / css-build
+├── migrations/       ← 001..015 SQL migrations (concerts, hidden albums, LLM chats, …)
+├── tests/            ← pytest suite (13 test files)
+├── scripts/          ← smoke-python.ps1
+├── Dockerfile.api / Dockerfile.api.dev
+├── entrypoint.sh     ← TLS cert generation + uvicorn start
+├── requirements.txt / requirements.api.txt / requirements-dev.txt
+└── README.md         ← API reference, local LLM, Spotify setup
 
-.github/              ← GitHub Actions / CI config
+.github/              ← GitHub Actions / CI config (release.yml)
 certs/                ← mkcert CA + server cert (gitignored; pre-generated for full stack)
 data/                 ← Local CSV/image cache (gitignored)
 desktop/              ← Standalone desktop app (PyInstaller)
-docs/                 ← Additional documentation
+docs/                 ← Additional documentation (STORAGE-POLICY.md, AI-TEXT-PIPELINE-PLAN.md)
 OpenWebUI-stack/      ← nginx, keycloak realm, MCP sources (gitignored; included for full stack)
 scripts/              ← Utility scripts
 ├── prepare_full_stack.py  ← idempotent pre-start repair (nginx, CA, .env)
-└── bootstrap_full_stack.py ← post-start bootstrap (MCP, sync, verification)
+├── bootstrap_full_stack.py ← post-start bootstrap (MCP, sync, verification)
+├── local-certs.sh    ← Reissue the leaf cert for a new LAN IP
+├── lan-expose.ps1    ← Publish the API on the LAN (portproxy + firewall)
+└── backup.ps1 / backup.sh ← Dump ./data + Postgres into ./backups/<timestamp>/
 
-docker-compose.yml         ← Solo stack (db, api, frontend)
+docker-compose.yml         ← Solo stack (db, api, frontend) — repo root
 docker-compose.full.yml    ← Full stack overlay (OpenWebUI, Keycloak, MCP, etc.)
-.env.example               ← Template for all configs
+.env.example               ← Template for all configs (56 keys)
 .gitignore                 ← Ignores .env, certs/, OpenWebUI-stack/, data/, build artifacts
 start-full-stack.sh/.bat  ← One-click deploy scripts
 ```
+
+### API routers (`/api/v1`)
+
+`albums` · `artists` · `auth` · `concerts` · `concert-scans` · `exports` · `hidden-albums`
+· `images` · `import` · `jobs` · `keycloak-auth` · `llm` · `load` · `meta` · `spotify` · `sync`
+
+The contract is **frozen**: additive changes only. Endpoint-level detail lives in
+`server/README.md` ("API" section) and in the interactive docs at `/docs`.
 
 ---
 
@@ -268,7 +363,7 @@ start-full-stack.sh/.bat  ← One-click deploy scripts
 - `.env` lives at the repo root (referenced by `docker-compose.yml`).
 - `data/` stays at the root and is mounted into the api container.
 - Build artifacts (`node_modules/`, `dist/`, `build/`, `.gradle/`, `.vs/`) are gitignored.
-- The `kotlin/` and `typescript/` folders are legacy source copies; they may drift from upstream. Current clients are in separate repositories (see links above).
+- The Android clients live in **separate repositories** (see the links at the top): `reSpotIt-kotlin-version`, `reSpotIt-react-version` (branch `main`) and `reSpotIt-react-version` (branch `feat/librespot-player`). This repository contains no client sources.
 - Full stack files (`certs/`, `OpenWebUI-stack/`) are now included in this repo (gitignored). The start-full-stack script copies them from the backup workspace if missing.
 - The Open WebUI API key is auto-generated on first deploy and persisted to `/data/.owui_api_key`. No manual key creation needed.
 - The one-click launcher preserves an existing `.env`; it only fills missing or placeholder secrets. This is deliberate: changing DB passwords after the Postgres volumes exist locks the stack out.
