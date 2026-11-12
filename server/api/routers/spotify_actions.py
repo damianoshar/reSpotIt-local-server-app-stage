@@ -21,7 +21,7 @@ from ..services.spotify_actions import (
     follow_artists_from_saved_albums, remove_saved_albums, save_saved_albums,
     search_spotify_catalog, get_artist_albums, get_spotify_albums,
     get_player_state, get_player_queue,
-    get_followed_artists, resolve_albums, resolve_artists,
+    get_followed_artists, resolve_albums, resolve_artists, resolve_tracks,
 )
 from ..services.playlist_cache import (
     upsert_playlist, get_playlist_by_spotify, replace_tracks,
@@ -57,6 +57,10 @@ class ResolveAlbumsBody(BaseModel):
 
 class ResolveArtistsBody(BaseModel):
     names: list[str] = Field(default_factory=list)
+
+class ResolveTracksBody(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+
 class CreatePlaylistBody(BaseModel):
     name:            str
     description:     str = ""
@@ -658,6 +662,21 @@ def resolve_albums_route(body: ResolveAlbumsBody, user: User = Depends(get_curre
     user_id = str(user.id)
     try:
         return resolve_albums(_token(user_id), body.items)
+    except Exception as e:
+        _handle(e)
+
+
+@router.post("/spotify/resolve-tracks", summary="Resolve artist+title pairs to Spotify tracks")
+def resolve_tracks_route(body: ResolveTracksBody, user: User = Depends(get_current_user)):
+    """The track counterpart of /spotify/resolve-albums.
+
+    Read-only: the route resolves and returns; it never writes to Spotify
+    (UI policy P9). The client adds the tracks to a playlist only after the
+    user pressed the button.
+    """
+    user_id = str(user.id)
+    try:
+        return resolve_tracks(_token(user_id), body.items)
     except Exception as e:
         _handle(e)
 

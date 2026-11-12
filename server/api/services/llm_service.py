@@ -427,6 +427,18 @@ _ALBUMS_SYSTEM = (
     "If none found, return {\"albums\": []}."
 )
 
+_TRACKS_SYSTEM = (
+    "You are a data extractor. Given the text of a web page, extract every song "
+    "title mentioned, with the artist who performs it. Return ONLY valid JSON with "
+    'this exact shape: {"tracks": [{"artist": "...", "title": "..."}]}. '
+    "No prose, no markdown fences. "
+    "Use the song title and the performing artist only: ignore chart ranks, "
+    "position changes, review scores, prices, durations and other table text "
+    "around them. "
+    "Keep names in the page's original language and script. "
+    "If none found, return {\"tracks\": []}."
+)
+
 _CONCERTS_SYSTEM = (
     "You are a data extractor. Given the text of a web page about concerts or "
     "events, extract every concert. Return ONLY valid JSON with this exact shape: "
@@ -469,6 +481,24 @@ _CONCERT_NUDGE_DATES = (
     "the date in slot 2 of every array as YYYY-MM-DD. When the year is missing, "
     "infer the nearest upcoming year from the page context. Never leave the "
     "date empty when the text shows one."
+)
+
+# The local model sometimes answers {"tracks": []} for a page that clearly
+# lists songs (reproduced with short lists such as "Radiohead Weird Fishes.
+# Portishead Roads. Daft Punk Around the World."). One retry with an explicit
+# nudge recovers them. The nudge must not push the model into inventing songs,
+# so it asks the model to *check* the text instead of asserting that it lists
+# tracks, and the retried rows are grounded in the page text before they are
+# kept (see :func:`_grounded_in`).
+#
+# Like the concert nudges, it is appended to the *user* message, never to the
+# system prompt: llama.cpp reuses the prompt cache by prefix, so rewriting the
+# system prompt would re-evaluate the whole page on every retry.
+_TRACK_NUDGE_EMPTY = (
+    "\n\n---\n\nIMPORTANT: check the text above for song titles. If it lists any, "
+    'extract each one as a separate {"artist", "title"} object, one object per '
+    "song. Only answer with an empty list when the text really contains no "
+    "song titles."
 )
 
 # Event pages keep a stale year in the header ("... στη Θεσσαλονίκη 2025") long
@@ -693,6 +723,95 @@ def extract_albums(text: str, *, token=None) -> dict:
             seen.add(key)
             out.append({"artist": artist, "album": album})
     return {"albums": out}
+
+
+def _norm_words(text: str) -> str:
+    """Lowercase text with everything but letters and digits turned into spaces."""
+    return _re.sub(r"[^0-9a-z]+", " ", (text or "").lower()).strip()
+
+
+def _grounded_in(text: str, title: str) -> bool:
+    """True when the title really comes from the page text.
+
+    Guards the nudge retry: the retry must not be able to put a song on the
+    user's playlist that the page never mentioned. The check is deliberately
+    loose - the title itself, or its longest word, has to appear in the page -
+    so a slightly reworded title ("Weird Fishes / Arpeggi" -> "Weird Fishes")
+    still passes.
+    """
+    norm_text = _norm_words(text)
+    norm_title = _norm_words(title)
+    if not norm_title or not norm_text:
+        return False
+    if norm_title in norm_text:
+        return True
+    words = [w for w in norm_title.split() if len(w) >= 5]
+    return bool(words) and any(w in norm_text for w in words)
+
+
+def _track_rows(data: dict) -> list[dict]:
+    """The (artist, title) rows of an extraction reply, without empty ones."""
+    rows = data.get("tracks") if isinstance(data, dict) else None
+    out: list[dict] = []
+    for t in rows if isinstance(rows, list) else []:
+        if not isinstance(t, dict):
+            continue
+        artist = str(t.get("artist") or "").strip()
+        title = str(t.get("title") or "").strip()
+        if not (artist or title):
+            continue
+        out.append({"artist": artist, "title": title})
+    return out
+
+
+def extract_tracks(text: str, *, token=None) -> dict:
+    """Extract (artist, title) track pairs, chunking long pages like the album scan.
+
+    The track counterpart of :func:`extract_albums`. A rendered tracklist page
+    can be tens of thousands of characters, so long text is extracted chunk by
+    chunk and merged.
+
+    A chunk that comes back empty is asked once more with a nudge: the local
+    model does sometimes answer ``{"tracks": []}`` for a page that clearly
+    lists songs, and a silent empty list would look like "no tracks found".
+    """
+    chunks = _split_for_extraction(text, ALBUM_CHUNK_CHARS, ALBUM_CHUNK_OVERLAP)
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for index, chunk in enumerate(chunks):
+        try:
+            data = extract_structured(_TRACKS_SYSTEM, chunk, token=token, max_tokens=4096)
+        except LLMError:
+            if len(chunks) == 1:
+                raise
+            logger.warning("Track scan chunk %d failed; skipping it", index)
+            continue
+        rows = _track_rows(data)
+        if not rows:
+            # The local model occasionally answers {"tracks": []} for a page
+            # full of song titles (seen finishing in ~1 second). Ask once more
+            # before reporting "no tracks".
+            logger.warning("Track scan chunk %d returned no tracks; retrying", index)
+            try:
+                data = extract_structured(
+                    _TRACKS_SYSTEM,
+                    chunk + _TRACK_NUDGE_EMPTY,
+                    token=token,
+                    max_tokens=4096,
+                )
+            except LLMError:
+                data = {}
+            # The retry may only keep songs the page really mentions.
+            rows = [r for r in _track_rows(data) if _grounded_in(chunk, r["title"])]
+        for row in rows:
+            artist = row["artist"]
+            title = row["title"]
+            key = (artist.casefold(), title.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"artist": artist, "title": title})
+    return {"tracks": out}
 
 
 def extract_concerts(text: str, *, token=None, timeout=None, mode: str | None = None) -> dict:

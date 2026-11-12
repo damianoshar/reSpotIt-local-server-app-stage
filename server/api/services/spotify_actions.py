@@ -345,6 +345,123 @@ def search_spotify_catalog(token: str, query: str, limit: int = 8) -> dict:
     return {"artists": artists, "albums": albums}
 
 
+def search_spotify_tracks(token: str, query: str, limit: int = 5) -> list[dict]:
+    """Search Spotify for tracks and return the fields the clients need."""
+    data = _get(token, "/search", params={"q": query, "type": "track", "limit": limit})
+    tracks = []
+    for track in (data.get("tracks") or {}).get("items") or []:
+        album = track.get("album") or {}
+        images = album.get("images") or []
+        artists_list = track.get("artists") or []
+        tracks.append({
+            "id": track.get("id"),
+            "uri": track.get("uri") or (f"spotify:track:{track.get('id')}" if track.get("id") else ""),
+            "name": track.get("name") or "Unknown title",
+            "artist": ", ".join(a.get("name", "") for a in artists_list if a.get("name")) or "Unknown artist",
+            "album": album.get("name") or "",
+            "album_id": album.get("id") or "",
+            "image_url": (images[0].get("url") if images else "") or "",
+            "spotify_url": (track.get("external_urls") or {}).get("spotify") or "",
+            "duration_ms": track.get("duration_ms") or 0,
+        })
+    return tracks
+
+
+def _best_track_match(tracks: list[dict], artist: str, title: str) -> dict | None:
+    """Pick the catalog track that really is (artist, title).
+
+    Spotify returns *something* for almost any query, so a hit is only used
+    when it actually matches. Unlike the album matcher, a known artist is
+    **required**: a track title on its own ("Mple") is far too generic, and
+    matching it to another band's song would put the wrong track in the
+    user's playlist.
+
+    The title is matched loosely enough to survive Spotify's own naming
+    ("Weird Fishes / Arpeggi", "Song - 2011 Remaster"), because the page
+    almost never carries the full title.
+    """
+    artist_l = (artist or "").strip().lower()
+    title_l = (title or "").strip().lower()
+
+    def _artist_matches(t: dict) -> bool:
+        return artist_l and artist_l in (t.get("artist") or "").strip().lower()
+
+    def _name(t: dict) -> str:
+        return (t.get("name") or "").strip().lower()
+
+    def _pick(test) -> dict | None:
+        for t in tracks:
+            if not isinstance(t, dict):
+                continue
+            if not artist_l or _artist_matches(t):
+                if test(_name(t)):
+                    return t
+        return None
+
+    # Exact title first.
+    match = _pick(lambda n: n == title_l)
+    if match:
+        return match
+    # Then the Spotify variants of the same title.
+    match = _pick(lambda n: n.startswith(title_l))
+    if match:
+        return match
+    match = _pick(lambda n: title_l in n)
+    if match:
+        return match
+    # No artist on the page: the title alone still has to carry the match.
+    if not artist_l:
+        for t in tracks:
+            if isinstance(t, dict) and _name(t) == title_l:
+                return t
+    return None
+
+
+def resolve_tracks(token: str, items: list) -> dict:
+    """Resolve [{artist, title}] pairs to Spotify tracks.
+
+    The track counterpart of :func:`resolve_albums`. Read-only: nothing is
+    written to Spotify (UI policy P9).
+    """
+    resolved = []
+    unresolved = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        artist = str(item.get("artist") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not artist and not title:
+            continue
+        if artist and title:
+            query = f'track:"{title}" artist:"{artist}"'
+        elif title:
+            query = f'track:"{title}"'
+        else:
+            query = artist
+        try:
+            tracks = search_spotify_tracks(token, query, limit=5)
+        except Exception:
+            tracks = []
+        match = _best_track_match(tracks, artist, title)
+        if match:
+            resolved.append({
+                "artist": artist,
+                "title": title,
+                "spotify_id": match.get("id"),
+                "uri": match.get("uri") or "",
+                "name": match.get("name") or title,
+                "artist_name": match.get("artist") or artist,
+                "album_name": match.get("album") or "",
+                "album_id": match.get("album_id") or "",
+                "image_url": match.get("image_url") or "",
+                "spotify_url": match.get("spotify_url") or "",
+                "duration_ms": match.get("duration_ms") or 0,
+            })
+        else:
+            unresolved.append({"artist": artist, "title": title})
+    return {"resolved": resolved, "unresolved": unresolved}
+
+
 def get_artist_albums(token: str, artist_id: str) -> list[dict]:
     albums = []
     url = f"/artists/{artist_id}/albums"

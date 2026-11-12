@@ -257,6 +257,31 @@ async def extract_albums(body: ExtractBody, user: User = Depends(get_current_use
     return {"data": data}
 
 
+@router.post("/extract-tracks", summary="Extract tracks from a page using AI")
+async def extract_tracks(body: ExtractBody, user: User = Depends(get_current_user)):
+    """The track counterpart of /extract-albums.
+
+    Additive route: the frozen library contract is untouched. The route only
+    reads the page and asks the model for the track list; it never writes
+    anything to Spotify (UI policy P9).
+    """
+    text = ""
+    if body.url:
+        try:
+            text = await run_in_threadpool(llm_service.fetch_page_text, body.url, max_chars=6000)
+        except llm_service.LLMError as exc:
+            raise _contract_error(exc) from exc
+    if body.text:
+        text = (text + "\n" + body.text).strip() if text else body.text.strip()
+    if not text:
+        raise ContractError(422, "llm_empty_input", "Provide url or text.")
+    try:
+        data = await _with_user_token(user, llm_service.extract_tracks, text)
+    except llm_service.LLMError as exc:
+        raise _contract_error(exc) from exc
+    return {"data": data}
+
+
 @router.post("/extract-concerts", summary="Extract concerts from a page using AI")
 async def extract_concerts(body: ExtractBody, user: User = Depends(get_current_user)):
     text = ""
