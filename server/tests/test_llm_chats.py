@@ -256,6 +256,85 @@ class TestChatHelpers:
         openwebui_service.append_exchange("tok", "chat-1", "q", "a", title="My title")
         assert captured["chat"]["title"] == "My title"
 
+    def test_append_exchange_names_one_model_on_the_user_message(self, monkeypatch):
+        """Open WebUI hides an answer when the user message has no model."""
+        stored = {
+            "id": "chat-1",
+            "title": "Scan",
+            "chat": {"title": "Scan", "messages": [],
+                     "history": {"messages": {}, "currentId": None}},
+        }
+        captured = {}
+
+        monkeypatch.setattr(openwebui_service, "get_chat", lambda token, cid: stored)
+        monkeypatch.setattr(
+            openwebui_service, "update_chat",
+            lambda token, cid, chat: captured.update(chat=chat) or {"id": cid},
+        )
+        monkeypatch.setattr(
+            openwebui_service, "resolve_model_id", lambda token=None: "model-x",
+        )
+
+        openwebui_service.append_exchange("tok", "chat-1", "question", "answer")
+
+        chat = captured["chat"]
+        user_msg, assistant_msg = chat["messages"]
+        assert user_msg["models"] == ["model-x"]
+        assert assistant_msg["model"] == "model-x"
+        assert assistant_msg["modelName"] == "model-x"
+
+    def test_append_assistant_text_extends_the_last_assistant_message(self, monkeypatch):
+        stored = {
+            "id": "chat-1",
+            "title": "Scan",
+            "chat": {
+                "title": "Scan",
+                "messages": [
+                    {"id": "u1", "parentId": None, "childrenIds": ["a1"],
+                     "role": "user", "content": "question", "models": ["m"]},
+                    {"id": "a1", "parentId": "u1", "childrenIds": [],
+                     "role": "assistant", "content": "first", "model": "m",
+                     "done": True},
+                ],
+                "history": {
+                    "messages": {
+                        "u1": {"id": "u1", "parentId": None, "childrenIds": ["a1"],
+                               "role": "user", "content": "question", "models": ["m"]},
+                        "a1": {"id": "a1", "parentId": "u1", "childrenIds": [],
+                               "role": "assistant", "content": "first", "model": "m",
+                               "done": True},
+                    },
+                    "currentId": "a1",
+                },
+            },
+        }
+        captured = {}
+
+        monkeypatch.setattr(openwebui_service, "get_chat", lambda token, cid: stored)
+        monkeypatch.setattr(
+            openwebui_service, "update_chat",
+            lambda token, cid, chat: captured.update(chat=chat) or {"id": cid},
+        )
+
+        openwebui_service.append_assistant_text("tok", "chat-1", "second", model="m")
+
+        chat = captured["chat"]
+        assert len(chat["messages"]) == 2
+        assert chat["messages"][1]["content"] == "first\n\nsecond"
+        assert chat["history"]["messages"]["a1"]["content"] == "first\n\nsecond"
+        assert chat["history"]["currentId"] == "a1"
+
+    def test_append_assistant_text_without_assistant_message_fails(self, monkeypatch):
+        stored = {
+            "id": "chat-1",
+            "title": "Scan",
+            "chat": {"title": "Scan", "messages": [],
+                     "history": {"messages": {}, "currentId": None}},
+        }
+        monkeypatch.setattr(openwebui_service, "get_chat", lambda token, cid: stored)
+        with pytest.raises(openwebui_service.OpenWebUIChatNotFound):
+            openwebui_service.append_assistant_text("tok", "chat-1", "text")
+
 
 # ── routes ─────────────────────────────────────────────────────────────────
 

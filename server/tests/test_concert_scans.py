@@ -310,15 +310,21 @@ def test_run_scan_stores_items_and_streams_progress(Session, user):
         scan = concert_scan_service.create_scan(db, user[0], url="https://example.com/concerts")
 
     progress: list[str] = []
+    turns: list[tuple[str, str, str]] = []
     with patch("api.services.llm_service.fetch_page_text", return_value="page text") as fetch, \
          patch("api.services.llm_service.extract_concerts", return_value={"concerts": [
              {"artist": "Radiohead", "date": "2026-06-01", "venue": "O2", "url": "https://x/1"},
              {"artist": "---", "date": "", "venue": "", "url": ""},
          ]}) as extract, \
          patch("api.services.openwebui_service.get_user_token", return_value="tok"), \
+         patch("api.services.openwebui_service.resolve_model_id", return_value="model-x"), \
          patch("api.services.openwebui_service.create_chat", return_value={"id": "chat-1"}), \
          patch("api.services.openwebui_service.append_exchange",
-               side_effect=lambda *a, **k: progress.append(a[3])):
+               side_effect=lambda *a, **k: (turns.append(("turn", a[2], a[3])),
+                                             progress.append(a[3]))), \
+         patch("api.services.openwebui_service.append_assistant_text",
+               side_effect=lambda *a, **k: (turns.append(("append", "", a[2])),
+                                             progress.append(a[2]))):
         concert_scan_service.run_scan(scan.id, user[0], "https://example.com/concerts", None)
 
     fetch.assert_called_once()
@@ -332,6 +338,12 @@ def test_run_scan_stores_items_and_streams_progress(Session, user):
     assert any("Fetching the page" in p for p in progress)
     assert any("Extracting concerts" in p for p in progress)
     assert any("Found 2 concert" in p for p in progress)
+    # The chat shows the request as the user message and one assistant bubble
+    # with the whole log; it never shows a placeholder like "Progress".
+    assert len([t for t in turns if t[0] == "turn"]) == 1
+    assert turns[0][1] == (
+        "Find the concerts listed on https://example.com/concerts")
+    assert all(t[1] != "Progress" for t in turns)
 
 
 def test_run_scan_text_skips_fetch(Session, user):

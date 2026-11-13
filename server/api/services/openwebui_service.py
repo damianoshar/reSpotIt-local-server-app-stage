@@ -275,6 +275,44 @@ def _chat_request(
         raise OpenWebUIError("Open WebUI returned non-JSON chat data.") from exc
 
 
+# Open WebUI renders an assistant reply only when the parent user message
+# names exactly one model: the reply is grouped by that model and a user
+# message with an empty "models" list leaves the answer invisible in the UI.
+# Every chat this service writes therefore carries a concrete model id.
+FALLBACK_MODEL_ID = "open-webui"
+
+_model_cache: dict[str, str] = {}
+
+
+def resolve_model_id(token: str | None = None) -> str:
+    """Return a model id Open WebUI knows, for chats written by this service.
+
+    Uses OPENWEBUI_MODEL when set, otherwise the first model Open WebUI
+    lists, otherwise a placeholder id so the chat still renders.
+    """
+    override = os.getenv("OPENWEBUI_MODEL", "").strip()
+    if override:
+        return override
+
+    key = token or ""
+    with _lock:
+        cached = _model_cache.get(key)
+    if cached:
+        return cached
+
+    model_id = FALLBACK_MODEL_ID
+    try:
+        from . import llm_service
+
+        model_id = llm_service.resolve_model(token=token)
+    except Exception as exc:  # noqa: BLE001 - a chat must never fail to write
+        logger.info("Using the placeholder model id for the chat: %s", exc)
+
+    with _lock:
+        _model_cache[key] = model_id
+    return model_id
+
+
 def list_chats(token: str | None, limit: int = 50, chat_type: str | None = None) -> list[dict[str, Any]]:
     path = "/api/v1/chats/"
     if chat_type:
@@ -300,7 +338,7 @@ def create_chat(
 ) -> dict[str, Any]:
     chat = {
         "title": title,
-        "models": [model] if model else [],
+        "models": [(model or "").strip() or resolve_model_id(token)],
         "params": {},
         "messages": [],
         "history": {"messages": {}, "currentId": None},
@@ -380,6 +418,7 @@ def append_exchange(
     now = int(time.time())
     user_id = str(uuid.uuid4())
     assistant_id = str(uuid.uuid4())
+    model_id = (model or "").strip() or resolve_model_id(token)
 
     user_message = {
         "id": user_id,
@@ -388,7 +427,7 @@ def append_exchange(
         "role": "user",
         "content": user_text,
         "timestamp": now,
-        "models": [model] if model else [],
+        "models": [model_id],
     }
     assistant_message = {
         "id": assistant_id,
@@ -396,8 +435,8 @@ def append_exchange(
         "childrenIds": [],
         "role": "assistant",
         "content": assistant_text,
-        "model": model or "",
-        "modelName": model or "",
+        "model": model_id,
+        "modelName": model_id,
         "timestamp": now,
         "done": True,
     }
@@ -418,5 +457,55 @@ def append_exchange(
 
     if title and str(row.get("title") or "").strip() in {"", "New Chat"}:
         chat["title"] = title
+
+    return update_chat(token, chat_id, chat)
+
+
+def append_assistant_text(
+    token: str | None,
+    chat_id: str,
+    text: str,
+    *,
+    model: str | None = None,
+    separator: str = "\n\n",
+) -> dict[str, Any]:
+    """Append ``text`` to the last assistant message of a chat.
+
+    Open WebUI shows one assistant bubble per turn, so streaming progress
+    into that bubble keeps a chat readable instead of adding a new turn for
+    every update. The flat ``messages`` list and the ``history.messages``
+    tree are kept in sync, like :func:`append_exchange` does.
+    """
+    row = get_chat(token, chat_id)
+    chat = dict(row.get("chat") or {})
+    messages = list(chat.get("messages") or [])
+    history = dict(chat.get("history") or {})
+    tree = dict(history.get("messages") or {})
+
+    last: dict[str, Any] | None = None
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            last = message
+            break
+    if last is None:
+        raise OpenWebUIChatNotFound("Chat has no assistant message to extend.")
+
+    model_id = (model or "").strip() or str(last.get("model") or "") or resolve_model_id(token)
+    content = str(last.get("content") or "")
+    updated = {**last, "content": f"{content}{separator}{text}" if content else text}
+    if model_id:
+        updated["model"] = model_id
+        updated["modelName"] = model_id
+
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, dict) and message.get("id") == updated.get("id"):
+            messages[index] = updated
+            break
+    if updated.get("id"):
+        tree[updated["id"]] = updated
+
+    chat["messages"] = messages
+    chat["history"] = {**history, "messages": tree}
 
     return update_chat(token, chat_id, chat)

@@ -260,18 +260,29 @@ def delete_scan(db, user_id, scan_id: str) -> int:
 # ── Background worker ─────────────────────────────────────────────────────────
 
 class _Chatter:
-    """Streams scan progress into a per-user Open WebUI chat (best-effort)."""
+    """Streams scan progress into a per-user Open WebUI chat (best-effort).
 
-    def __init__(self, user: User | None, title: str):
+    The chat holds one turn: the request as the user message and the whole
+    progress log as the assistant message. Open WebUI renders one assistant
+    bubble per turn, so appending to that bubble keeps the scan readable
+    instead of opening a new turn for every update.
+    """
+
+    def __init__(self, user: User | None, title: str, prompt: str = ""):
         self.token: str | None = None
         self.chat_id: str = ""
+        self.model: str = ""
+        self.prompt: str = prompt or title
+        self._started = False
         if user is None:
             return
         from . import openwebui_service
         try:
             token = openwebui_service.get_user_token(user)
+            self.model = openwebui_service.resolve_model_id(token)
             row = openwebui_service.create_chat(
                 token, title=title[:200] or "Concert scan",
+                model=self.model,
                 chat_type="extract_concerts",
             )
             self.token = token
@@ -284,8 +295,16 @@ class _Chatter:
             return
         from . import openwebui_service
         try:
-            openwebui_service.append_exchange(
-                self.token, self.chat_id, "Progress", text, title=None,
+            if not self._started:
+                # First update opens the turn: the request plus what is known.
+                self._started = True
+                openwebui_service.append_exchange(
+                    self.token, self.chat_id, self.prompt, text,
+                    model=self.model or None,
+                )
+                return
+            openwebui_service.append_assistant_text(
+                self.token, self.chat_id, text, model=self.model or None,
             )
         except Exception as exc:
             logger.info("Concert scan progress write failed: %s", exc)
@@ -336,6 +355,15 @@ def _title_for(scan: ConcertScan) -> str:
     return "Concert scan: pasted text"
 
 
+def _prompt_for(scan: ConcertScan) -> str:
+    """The request the chat shows as the user message."""
+    if scan.source_kind in ("url", "page") and scan.source_url:
+        return f"Find the concerts listed on {scan.source_url}"
+    if scan.source_kind == "file":
+        return "Find the concerts listed in the uploaded file"
+    return "Find the concerts listed in the pasted text"
+
+
 def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> None:
     """Background entry point: extract concerts and stream progress.
 
@@ -354,7 +382,7 @@ def run_scan(scan_id: str, user_id: str, url: str | None, text: str | None) -> N
         if scan is None:
             return
         user = db.query(User).filter(User.id == str(user_id)).first()
-        chatter = _Chatter(user, _title_for(scan))
+        chatter = _Chatter(user, _title_for(scan), _prompt_for(scan))
         if chatter.chat_id:
             scan.chat_id = chatter.chat_id
             scan.updated_at = _utcnow()
