@@ -22,6 +22,7 @@ from ..services.spotify_actions import (
     search_spotify_catalog, get_artist_albums, get_spotify_albums,
     get_player_state, get_player_queue,
     get_followed_artists, resolve_albums, resolve_artists, resolve_tracks,
+    top_tracks_from_albums,
 )
 from ..services.playlist_cache import (
     upsert_playlist, get_playlist_by_spotify, replace_tracks,
@@ -60,6 +61,12 @@ class ResolveArtistsBody(BaseModel):
 
 class ResolveTracksBody(BaseModel):
     items: list[dict] = Field(default_factory=list)
+
+
+class TopTracksBody(BaseModel):
+    album_ids: list[str] = Field(default_factory=list)
+    # How many of the most popular tracks to return per album (1..5).
+    per_album: int = 1
 
 class CreatePlaylistBody(BaseModel):
     name:            str
@@ -677,6 +684,22 @@ def resolve_tracks_route(body: ResolveTracksBody, user: User = Depends(get_curre
     user_id = str(user.id)
     try:
         return resolve_tracks(_token(user_id), body.items)
+    except Exception as e:
+        _handle(e)
+
+
+@router.post("/spotify/top-tracks-from-albums",
+             summary="Most popular track(s) of each album (read-only)")
+def top_tracks_from_albums_route(body: TopTracksBody, user: User = Depends(get_current_user)):
+    """Return the most popular track of each album, ranked by Spotify popularity.
+
+    Read-only route: it fetches the album track lists and ranks them, but it
+    never writes to Spotify (UI policy P9). The client adds the tracks to the
+    playlist the user chose, and only after the user pressed the button.
+    """
+    user_id = str(user.id)
+    try:
+        return top_tracks_from_albums(_token(user_id), body.album_ids, body.per_album)
     except Exception as e:
         _handle(e)
 

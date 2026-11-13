@@ -462,6 +462,111 @@ def resolve_tracks(token: str, items: list) -> dict:
     return {"resolved": resolved, "unresolved": unresolved}
 
 
+# ── Most popular track(s) per album ───────────────────────────────────────────
+
+def _album_tracks_with_popularity(token: str, album_id: str) -> list[dict]:
+    """Every track of one album, with its Spotify popularity.
+
+    Two Spotify calls per album: the album's own track list (simplified
+    objects, no popularity) and then ``/tracks?ids=...`` which returns the
+    full objects that do carry ``popularity``.
+    """
+    album = _get(token, f"/albums/{album_id}")
+    images = album.get("images") or []
+    album_image_url = images[0].get("url") if images else ""
+    album_name = album.get("name") or ""
+    release_date = album.get("release_date") or ""
+    release_year = (int(release_date[:4])
+                    if len(release_date) >= 4 and release_date[:4].isdigit() else None)
+    album_artists = ", ".join(
+        a["name"] for a in (album.get("artists") or []) if a.get("name")
+    )
+
+    items: list[dict] = []
+    url, params = f"/albums/{album_id}/tracks", {"limit": 50}
+    while url:
+        data = _get(token, url, params=params)
+        items.extend(item for item in (data.get("items") or []) if item)
+        url, params = data.get("next"), {}
+
+    ids = [item["id"] for item in items if item.get("id")]
+    popularity: dict[str, int] = {}
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            data = _get(token, "/tracks", params={"ids": ",".join(chunk)})
+        except Exception:
+            continue
+        # Spotify answers with {"tracks": [...]}; a bare list is accepted too.
+        batch = data.get("tracks") if isinstance(data, dict) else data
+        for track in batch or []:
+            if track and track.get("id"):
+                popularity[track["id"]] = track.get("popularity") or 0
+
+    rows = []
+    for item in items:
+        track_id = item.get("id")
+        if not track_id:
+            continue
+        rows.append({
+            "spotify_id":      track_id,
+            "name":            item.get("name") or "",
+            "artist_names":    ", ".join(
+                a["name"] for a in (item.get("artists") or []) if a.get("name")
+            ) or album_artists,
+            "disc_number":     item.get("disc_number"),
+            "track_number":    item.get("track_number"),
+            "duration_ms":     item.get("duration_ms"),
+            "uri":             item.get("uri") or f"spotify:track:{track_id}",
+            "explicit":        bool(item.get("explicit")),
+            "preview_url":     item.get("preview_url"),
+            "popularity":      popularity.get(track_id, 0),
+            "album_id":        album_id,
+            "album_name":      album_name,
+            "album_image_url": album_image_url,
+            "release_year":    release_year,
+        })
+    return rows
+
+
+def top_tracks_from_albums(token: str, album_ids: list[str], per_album: int = 1) -> dict:
+    """The most popular track(s) of each album, by Spotify popularity.
+
+    Read-only: the album track lists are fetched and ranked, nothing is
+    written to Spotify (UI policy P9). The client decides where the tracks
+    go, and only after the user picked a playlist.
+
+    Ties on popularity are broken by the lowest track number, so the pick is
+    stable and reproducible.
+    """
+    per_album = max(1, min(int(per_album or 1), 5))
+    tracks: list[dict] = []
+    skipped: list[dict] = []
+    seen: set[str] = set()
+
+    for album_id in album_ids or []:
+        album_id = str(album_id or "").strip()
+        if not album_id or album_id in seen:
+            continue
+        seen.add(album_id)
+        try:
+            rows = _album_tracks_with_popularity(token, album_id)
+        except Exception as e:
+            skipped.append({"album_id": album_id, "reason": str(e)})
+            continue
+        if not rows:
+            skipped.append({"album_id": album_id, "reason": "No tracks in this album."})
+            continue
+        rows.sort(key=lambda r: (
+            -(r.get("popularity") or 0),
+            r.get("track_number") if r.get("track_number") is not None else 9999,
+            (r.get("name") or "").lower(),
+        ))
+        tracks.extend(rows[:per_album])
+
+    return {"tracks": tracks, "skipped": skipped}
+
+
 def get_artist_albums(token: str, artist_id: str) -> list[dict]:
     albums = []
     url = f"/artists/{artist_id}/albums"
