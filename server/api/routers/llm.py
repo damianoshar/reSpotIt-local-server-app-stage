@@ -8,6 +8,8 @@
   POST   /api/v1/llm/chats           - create a chat
   GET    /api/v1/llm/chats/{id}      - one chat with its messages
   DELETE /api/v1/llm/chats/{id}      - delete a chat
+  POST   /api/v1/llm/extract-albums  - album scan (also logs the scan chat)
+  POST   /api/v1/llm/extract-tracks  - track scan (also logs the scan chat)
 
 Additive: the frozen library contract is untouched. Every route needs the
 same server JWT (or a Keycloak access token) as the rest of /api/v1; the
@@ -22,6 +24,11 @@ Phase 5/6: chats are stored in Open WebUI under that same per-user identity.
 (``use_history`` / ``history_limit``) and appends the new exchange
 (``persist``). The pointer to the current chat is kept locally in
 ``llm_chat_sessions``.
+
+Scans are logged: ``extract-albums`` and ``extract-tracks`` write one turn
+into a fresh Open WebUI chat (``chat_type=extract_albums`` / ``extract_tracks``)
+and answer with the ``chat_id`` next to the extracted rows, so the scan shows
+up in the user's chat history instead of vanishing.
 """
 import logging
 from typing import Literal
@@ -35,7 +42,7 @@ from ..contract import ContractError
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import User
-from ..services import chat_session_service, llm_service, openwebui_service
+from ..services import chat_session_service, llm_service, openwebui_service, scan_chat_service
 
 logger = logging.getLogger("llm")
 
@@ -254,7 +261,15 @@ async def extract_albums(body: ExtractBody, user: User = Depends(get_current_use
         data = await _with_user_token(user, llm_service.extract_albums, text)
     except llm_service.LLMError as exc:
         raise _contract_error(exc) from exc
-    return {"data": data}
+    # The scan is logged in the user's Open WebUI chats so the request and the
+    # answer stay visible (best-effort: a missing chat never fails the scan).
+    chat_id = scan_chat_service.record_scan(
+        user,
+        kind=scan_chat_service.ALBUM_KIND,
+        source=(body.url or "").strip() or None,
+        rows=data.get("albums") or [],
+    )
+    return {"data": data, "chat_id": chat_id}
 
 
 @router.post("/extract-tracks", summary="Extract tracks from a page using AI")
@@ -279,7 +294,13 @@ async def extract_tracks(body: ExtractBody, user: User = Depends(get_current_use
         data = await _with_user_token(user, llm_service.extract_tracks, text)
     except llm_service.LLMError as exc:
         raise _contract_error(exc) from exc
-    return {"data": data}
+    chat_id = scan_chat_service.record_scan(
+        user,
+        kind=scan_chat_service.TRACK_KIND,
+        source=(body.url or "").strip() or None,
+        rows=data.get("tracks") or [],
+    )
+    return {"data": data, "chat_id": chat_id}
 
 
 @router.post("/extract-concerts", summary="Extract concerts from a page using AI")
