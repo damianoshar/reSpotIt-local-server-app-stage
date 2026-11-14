@@ -174,7 +174,8 @@ def album_groups(spotify_id: str, user_id: str) -> list[dict]:
     with _connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """SELECT pt.album_spotify_id, pt.album_name, pt.album_image_url,
-                      pt.release_year, pt.artist_names, pt.name AS track_name
+                      pt.release_year, pt.artist_names, pt.name AS track_name,
+                      pt.position
                FROM playlist_tracks pt
                JOIN playlists p ON p.id = pt.playlist_id
                WHERE p.spotify_id = %s AND p.user_id = %s
@@ -199,6 +200,10 @@ def album_groups(spotify_id: str, user_id: str) -> list[dict]:
                 "genre":            "",
                 "image_url":        t["album_image_url"] or "",
                 "track_titles":     [],
+                # Playlist position of the album's first track: Spotify has no
+                # "date added" for a playlist item, so the position is what the
+                # dashboard shows as "Date Added".
+                "position":         t["position"] if t["position"] is not None else 0,
             }
             groups[album_id] = g
             order.append(album_id)

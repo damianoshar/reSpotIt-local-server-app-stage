@@ -357,8 +357,8 @@ def playlist_albums(
     search:    str = None,
     genre:     str = None,
     artist:    str = None,
-    year_from: int = None,
-    year_to:   int = None,
+    year_from: str = None,
+    year_to:   str = None,
     sort:      str = "artist",
     order:     str = "asc",
     page:      int = 1,
@@ -369,6 +369,22 @@ def playlist_albums(
     user_id = str(user.id)
     _cached_or_404(playlist_id, user_id)
     groups = album_groups(playlist_id, user_id)
+
+    # Tolerate empty/missing year filters (clients send year_from= with no
+    # value, which a strict int parameter rejects as 422).
+    def _as_year(v):
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            iv = int(v)
+        except (ValueError, TypeError):
+            return None
+        if iv < 1900 or iv > 2100:
+            return None
+        return iv
+
+    year_from = _as_year(year_from)
+    year_to = _as_year(year_to)
 
     q = (search or "").strip().lower()
     g = (genre or "").strip().lower()
@@ -395,6 +411,9 @@ def playlist_albums(
         "year":        lambda gr: gr["year"],
         "genre":       lambda gr: gr["genre"].lower(),
         "track_count": lambda gr: gr["track_count"],
+        # "Date Added" for a playlist album is its position in the playlist.
+        "added_at":    lambda gr: gr.get("position", 0),
+        "added":       lambda gr: gr.get("position", 0),
     }.get(sort, lambda gr: gr["artist"].lower())
     filtered.sort(key=key, reverse=(order == "desc"))
 
@@ -408,6 +427,8 @@ def playlist_albums(
                 "id": gr["album_spotify_id"], "title": gr["title"], "artist": gr["artist"],
                 "year": gr["year"], "genre": gr["genre"], "image_url": gr["image_url"],
                 "track_count": gr["track_count"], "track_titles": gr["track_titles"],
+                # Playlist position of the album's first track ("Date Added").
+                "position": gr.get("position", 0),
             }
             for gr in items
         ],
