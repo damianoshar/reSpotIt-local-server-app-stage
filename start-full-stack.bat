@@ -31,6 +31,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Read the LAN origin that prepare just wrote, so every printed URL is
+REM reachable from a phone or a second PC (never localhost).
+for /f "tokens=2 delims==" %%a in ('findstr /b "PUBLIC_ORIGIN=" .env') do set "PUBLIC_ORIGIN=%%a"
+for /f "tokens=2 delims==" %%a in ('findstr /b "LAN_IP=" .env') do set "LAN_IP=%%a"
+if not defined PUBLIC_ORIGIN set "PUBLIC_ORIGIN=https://localhost"
+if not defined LAN_IP set "LAN_IP=localhost"
+
 echo [..] Starting containers...
 docker compose -f docker-compose.yml -f docker-compose.full.yml up -d --build
 if errorlevel 1 (
@@ -51,15 +58,15 @@ if "%BOOTSTRAP_RC%"=="0" (
 ) else (
     echo [warn] Full stack started with warnings. See the bootstrap output above.
 )
-echo    reSpotIt frontend: http://localhost:8888
-echo    reSpotIt API:      https://localhost:8000
-echo    OpenWebUI:         https://localhost/
-echo    Keycloak Admin:    https://localhost/authKeycloak/admin/
-echo    MinIO Console:     http://localhost:9001
-echo    Redis Insight:     http://localhost:5540
+echo    reSpotIt frontend: http://%LAN_IP%:8888
+echo    reSpotIt API:      https://%LAN_IP%:8000
+echo    OpenWebUI:         %PUBLIC_ORIGIN%/
+echo    Keycloak Admin:    %PUBLIC_ORIGIN%/authKeycloak/admin/
+echo    MinIO Console:     http://%LAN_IP%:9001
+echo    Redis Insight:     http://%LAN_IP%:5540
 echo.
-echo First run: open https://localhost/ and use the Keycloak Register link
-echo to create your account. Then connect Spotify at http://localhost:8888
+echo First run: open %PUBLIC_ORIGIN%/ and use the Keycloak Register link
+echo to create your account. Then connect Spotify at http://%LAN_IP%:8888
 echo and re-run this script to sync the library.
 
 exit /b %BOOTSTRAP_RC%

@@ -103,7 +103,7 @@ The launcher is **idempotent** — run it as often as you like. It:
    - makes `OAUTH_CLIENT_SECRET` / `KEYCLOAK_CLIENT_SECRET` match the running
      Keycloak client (or the realm export on first run);
    - appends the local mkcert root CA to Open WebUI's CA bundle so the OIDC
-     backchannel can verify `https://localhost`;
+     backchannel can verify the LAN origin;
 4. starts the stack, then bootstraps it:
    - creates the reSpotIt MCP service account;
    - copies the owner's Spotify link to that account on a single-user stack;
@@ -117,12 +117,19 @@ Pass `--no-sync` to skip the initial library sync, or `--no-verify` to skip
 the final checks.
 
 ### First run
-1. Open **https://localhost/** and click Keycloak's **Register** link to create
+1. Open **`https://<pc-lan-ip>/`** (printed by the launcher; also stored as
+   `PUBLIC_ORIGIN` in `.env`) and click Keycloak's **Register** link to create
    your account (the realm allows self-registration).
-2. Open **http://localhost:8888**, sign in to reSpotIt, and connect Spotify.
+2. Open **`http://<pc-lan-ip>:8888`**, sign in to reSpotIt, and connect Spotify.
 3. Re-run the one-click launcher (or just
    `python scripts/bootstrap_full_stack.py`) to copy the Spotify link to the
    MCP service account and sync the library.
+
+Every exposed URL names the PC's LAN IP, never `localhost`: a phone or another
+PC resolves `localhost` to itself. The origin is detected on every start and
+written to `.env` as `LAN_IP` / `PUBLIC_ORIGIN`; `KEYCLOAK_HOSTNAME`,
+`OPENID_PROVIDER_URL`, `OPENID_REDIRECT_URI`, `PUBLIC_BASE_URL` and the Keycloak
+realm follow it automatically.
 
 ### Manual start
 ```bash
@@ -134,13 +141,13 @@ python scripts/bootstrap_full_stack.py
 > **Note:** The full stack uses pre-generated mkcert certs for nginx/Keycloak/OpenWebUI trust. The reSpotIt API uses the same certs (mounted read-only).
 
 This adds:
-- OpenWebUI at https://localhost (via nginx proxy on 443)
-- Keycloak at https://localhost/authKeycloak
+- OpenWebUI at `https://<pc-lan-ip>/` (via nginx proxy on 443)
+- Keycloak at `https://<pc-lan-ip>/authKeycloak`
 - MinIO at :9000/:9001
 - Redis + Redis Insight at :5540
 - reSpotIt MCP at 127.0.0.1:8091
 - Spotify MCP at 127.0.0.1:8090
-- reSpotIt API through nginx at https://localhost/respotit/
+- reSpotIt API through nginx at `https://<pc-lan-ip>/respotit/`
 
 > **MinIO / Redis:** both are wired to Open WebUI (restored 2026-11-08) — `STORAGE_PROVIDER=s3` with `S3_*` for file uploads and `WEBSOCKET_MANAGER=redis` for websockets, on both `open-webui` and `open-webui-2`. Credentials come from `MINIO_*` (defaults keep existing data readable). See `docs/AI-TEXT-PIPELINE-PLAN.md`.
 
@@ -151,7 +158,8 @@ This adds:
 | Open WebUI says **Backend Required** | nginx `location /api/` shadows Open WebUI's own `/api/` | `prepare_full_stack.py` replaces it with `/respotit/` |
 | **Your provider has not provided a trusted header** | `WEBUI_AUTH_TRUSTED_*` on the public instance | public instance has no trusted headers; API uses `open-webui-2` |
 | **Sign-in with your identity provider failed** | `OAUTH_CLIENT_SECRET` / `KEYCLOAK_CLIENT_SECRET` mismatch | prepare syncs both with the live Keycloak client secret |
-| OIDC callback cannot reach `https://localhost` | container does not trust the mkcert root | prepare appends `certs/ca/rootCA.pem` to the CA bundle |
+| OIDC callback cannot reach `https://<pc-lan-ip>` | container does not trust the mkcert root | prepare appends `certs/ca/rootCA.pem` to the CA bundle |
+| Keycloak redirects to `localhost` | stale realm redirect URI or Open WebUI `webui.url` | prepare rewrites `.env`; bootstrap patches the live realm and DB |
 | reSpotIt MCP has no tools in Open WebUI | connection not registered | bootstrap registers it and verifies 38 tools |
 | AI assistant has no library data | service account has no Spotify link / no sync | bootstrap copies the owner's link and starts a sync |
 | `.env` lost but Postgres volumes remain | new random DB passwords | restore the old `.env`; do not delete volumes |
@@ -237,9 +245,10 @@ docker compose -f docker-compose.yml -f docker-compose.full.yml restart api
 | Group | Keys |
 |---|---|
 | Spotify | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `REDIRECT_URI`, `PUBLIC_BASE_URL` |
+| LAN origin | `LAN_IP`, `PUBLIC_ORIGIN` (auto-detected and rewritten on every start) |
 | Server | `SSL_ENABLED`, `CORS_ALLOW_ORIGIN`, `FORWARDED_ALLOW_IPS` |
 | Database | `DATABASE_URL` (default `postgresql://spotify:spotify@127.0.0.1:5433/spotify`) |
-| Keycloak / OIDC | `KEYCLOAK_ENABLED`, `KEYCLOAK_REALM`, `KEYCLOAK_HOSTNAME`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD`, `OPENID_PROVIDER_URL`, `OPENID_REDIRECT_URI`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_SCOPES`, `OAUTH_PROVIDER_NAME`, `OAUTH_AUTO_SIGNUP`, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`, `ENABLE_OAUTH_SIGNUP` |
+| Keycloak / OIDC | `KEYCLOAK_ENABLED`, `KEYCLOAK_REALM`, `KEYCLOAK_HOSTNAME`, `KEYCLOAK_INTERNAL_URL`, `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_ISSUER`, `KEYCLOAK_REDIRECT_URI`, `KEYCLOAK_ALLOWED_REDIRECTS`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ADMIN`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_USER`, `KEYCLOAK_DB_PASSWORD`, `OPENID_PROVIDER_URL`, `OPENID_REDIRECT_URI`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_SCOPES`, `OAUTH_PROVIDER_NAME`, `OAUTH_AUTO_SIGNUP`, `OAUTH_MERGE_ACCOUNTS_BY_EMAIL`, `ENABLE_OAUTH_SIGNUP` |
 | Open WebUI | `WEBUI_AUTH`, `WEBUI_SECRET_KEY`, `DEFAULT_USER_ROLE`, `OPENWEBUI_DB_*`, `OPENWEBUI_URL`, `OPENWEBUI_TRUSTED_AUTH`, `OPENWEBUI_TRUSTED_HEADER`, `OPENWEBUI_TRUSTED_NAME_HEADER`, `OPENAI_API_BASE_URL`, `OPENAI_API_KEY` |
 | MCP | `MCP_API_KEY`, `MCP_TOOLS`, `RESPOTIT_MCP_*`, `SPOTIFY_MCP_URL`, `SPOTIFY_MCP_TOKEN` |
 | MinIO / Redis | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET_NAME`, `MINIO_REGION` |

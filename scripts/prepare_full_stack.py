@@ -19,10 +19,12 @@ It never prints secret values.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -93,6 +95,55 @@ def generate_hex() -> str:
 
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+# ── LAN origin ──────────────────────────────────────────────────────────────
+# Every exposed URL in the stack (Open WebUI, Keycloak, the API) must name the
+# PC's LAN address, never localhost: a phone or another PC cannot resolve
+# localhost back to this machine.  Detect the address other devices can reach
+# and derive one origin from it.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")  # Tailscale / carrier NAT
+
+
+def detect_lan_ip() -> str:
+    """Return the primary LAN IPv4 address of this PC."""
+    candidates: list[str] = []
+
+    # The UDP connect() only selects a route; it sends no packet.
+    for target in ("8.8.8.8", "1.1.1.1", "192.168.1.1"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect((target, 80))
+                candidates.append(sock.getsockname()[0])
+        except OSError:
+            continue
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            candidates.append(info[4][0])
+    except OSError:
+        pass
+
+    for raw in candidates:
+        try:
+            addr = ipaddress.IPv4Address(raw)
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            continue
+        if addr in _CGNAT:
+            continue
+        return str(addr)
+    return "127.0.0.1"
+
+
+def public_origin() -> tuple[str, str]:
+    """Return ``(lan_ip, https_origin)`` for the externally reachable stack."""
+    lan_ip = detect_lan_ip()
+    if lan_ip == "127.0.0.1":
+        print("[warn] public origin: no LAN IPv4 found; falling back to localhost")
+        return lan_ip, "https://localhost"
+    return lan_ip, f"https://{lan_ip}"
 
 
 def parse_env(text: str) -> dict[str, str]:
@@ -252,6 +303,76 @@ def patch_nginx() -> None:
     print("[ok] nginx: replaced /api/ with /respotit/")
 
 
+def patch_nginx_hosts() -> None:
+    """Accept any Host header and redirect HTTP to the host that was requested.
+
+    ``server_name localhost`` is only the default server here, but the 301 used
+    ``$server_name`` and therefore sent every device to ``https://localhost``.
+    Using ``$host`` keeps whatever address the browser actually used.
+    """
+    path = STACK / "nginx" / "nginx.conf"
+    if not path.exists():
+        print("[warn] nginx: nginx.conf is missing; skipping host patch")
+        return
+
+    text = read_text(path)
+    updated = text.replace("server_name localhost;", "server_name _;")
+    updated = updated.replace(
+        "return 301 https://$server_name$request_uri;",
+        "return 301 https://$host$request_uri;",
+    )
+    if updated != text:
+        write_text(path, updated)
+        print("[ok] nginx: accepts any Host and redirects to the requested host")
+    else:
+        print("[ok] nginx: Host handling already LAN-safe")
+
+
+# ── Keycloak realm export ───────────────────────────────────────────────────
+def patch_realm_export(lan_ip: str, origin: str) -> None:
+    """Add the LAN redirect URIs to the realm used on a fresh Keycloak volume.
+
+    The live realm is patched by ``bootstrap_full_stack.py`` after Keycloak is
+    up; this keeps a first-time import correct without a second run.
+    """
+    path = STACK / "keycloak" / "realm-export.json"
+    if not path.exists():
+        print("[warn] keycloak realm export: missing; skipping")
+        return
+    try:
+        data = json.loads(read_text(path))
+    except (OSError, ValueError) as exc:
+        print(f"[warn] keycloak realm export: could not parse ({exc})")
+        return
+
+    changed = False
+    for client in data.get("clients", []):
+        if client.get("clientId") != "open-webui":
+            continue
+        redirects = list(client.get("redirectUris") or [])
+        origins = list(client.get("webOrigins") or [])
+        for url in (
+            f"{origin}/oauth/oidc/callback",
+            f"http://{lan_ip}:8888/oauth/oidc/callback",
+            f"http://{lan_ip}:8888/api/v1/auth/keycloak/callback",
+        ):
+            if url not in redirects:
+                redirects.append(url)
+                changed = True
+        for url in (origin, f"http://{lan_ip}:8888"):
+            if url not in origins:
+                origins.append(url)
+                changed = True
+        client["redirectUris"] = redirects
+        client["webOrigins"] = origins
+
+    if changed:
+        write_text(path, json.dumps(data, indent=2) + "\n")
+        print(f"[ok] keycloak realm export: LAN redirect URIs for {lan_ip}")
+    else:
+        print("[ok] keycloak realm export: LAN redirect URIs already present")
+
+
 # ── CA bundle ───────────────────────────────────────────────────────────────
 def extract_pem(text: str) -> str:
     match = re.search(
@@ -363,6 +484,7 @@ def render_env(values: dict[str, str]) -> str:
         "",
     ]
     lines += block("Core", [
+        "LAN_IP", "PUBLIC_ORIGIN",
         "REDIRECT_URI", "PUBLIC_BASE_URL", "SSL_ENABLED",
         "CORS_ALLOW_ORIGIN", "FORWARDED_ALLOW_IPS",
     ])
@@ -404,11 +526,13 @@ def render_env(values: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def fresh_env_values(secret: str) -> dict[str, str]:
+def fresh_env_values(secret: str, lan_ip: str, origin: str) -> dict[str, str]:
     mcp_key = generate_token()
     return {
-        "REDIRECT_URI": "https://127.0.0.1:8000/api/v1/auth/callback",
-        "PUBLIC_BASE_URL": "https://127.0.0.1:8000",
+        "LAN_IP": lan_ip,
+        "PUBLIC_ORIGIN": origin,
+        "REDIRECT_URI": f"https://{lan_ip}:8000/api/v1/auth/callback",
+        "PUBLIC_BASE_URL": f"https://{lan_ip}:8000",
         "SSL_ENABLED": "true",
         "CORS_ALLOW_ORIGIN": "*",
         "FORWARDED_ALLOW_IPS": "*",
@@ -422,9 +546,18 @@ def fresh_env_values(secret: str) -> dict[str, str]:
         "KEYCLOAK_ENABLED": "true",
         "KEYCLOAK_CLIENT_ID": "open-webui",
         "KEYCLOAK_CLIENT_SECRET": secret,
-        "KEYCLOAK_HOSTNAME": "https://localhost/authKeycloak",
-        "OPENID_PROVIDER_URL": "https://localhost/authKeycloak/realms/open-webui/.well-known/openid-configuration",
-        "OPENID_REDIRECT_URI": "https://localhost/oauth/oidc/callback",
+        "KEYCLOAK_HOSTNAME": f"{origin}/authKeycloak",
+        "KEYCLOAK_INTERNAL_URL": "http://keycloak:8080/authKeycloak",
+        "KEYCLOAK_PUBLIC_URL": f"{origin}/authKeycloak",
+        "KEYCLOAK_ISSUER": f"{origin}/authKeycloak/realms/open-webui",
+        "KEYCLOAK_REDIRECT_URI": f"http://{lan_ip}:8888/api/v1/auth/keycloak/callback",
+        "KEYCLOAK_ALLOWED_REDIRECTS": (
+            f"http://{lan_ip}:8888,{origin},"
+            "http://localhost:8888,http://127.0.0.1:8888,"
+            "http://localhost:3000,http://127.0.0.1:3000"
+        ),
+        "OPENID_PROVIDER_URL": f"{origin}/authKeycloak/realms/open-webui/.well-known/openid-configuration",
+        "OPENID_REDIRECT_URI": f"{origin}/oauth/oidc/callback",
         "OAUTH_PROVIDER_NAME": "Keycloak",
         "OAUTH_SCOPES": "openid email profile",
         "OAUTH_CLIENT_ID": "open-webui",
@@ -462,17 +595,41 @@ def fresh_env_values(secret: str) -> dict[str, str]:
     }
 
 
-def ensure_env() -> None:
+def ensure_env(lan_ip: str, origin: str) -> None:
     if not ENV_FILE.exists():
         secret = realm_client_secret()
-        write_text(ENV_FILE, render_env(fresh_env_values(secret)))
-        print("[ok] .env: generated with random secrets")
+        write_text(ENV_FILE, render_env(fresh_env_values(secret, lan_ip, origin)))
+        print(f"[ok] .env: generated with random secrets (public origin {origin})")
         return
 
     values = parse_env(read_text(ENV_FILE))
     secret = oauth_client_secret(values)
 
+    # Exposed URLs always use the PC's LAN IP.  Overwriting these on every run
+    # is deliberate: a stale https://localhost here sends Keycloak (and the
+    # browser) back to the device that opened the page, which cannot work from
+    # a phone or a second PC.
     updates: dict[str, str] = {
+        "LAN_IP": lan_ip,
+        "PUBLIC_ORIGIN": origin,
+        "REDIRECT_URI": f"https://{lan_ip}:8000/api/v1/auth/callback",
+        "PUBLIC_BASE_URL": f"https://{lan_ip}:8000",
+        "KEYCLOAK_HOSTNAME": f"{origin}/authKeycloak",
+        # The API's own Keycloak login (native apps) is a separate consumer of
+        # the same realm.  Its defaults point at localhost:8083, which no other
+        # device can reach; give it the LAN origin and the compose-internal
+        # address for backchannel calls.
+        "KEYCLOAK_INTERNAL_URL": "http://keycloak:8080/authKeycloak",
+        "KEYCLOAK_PUBLIC_URL": f"{origin}/authKeycloak",
+        "KEYCLOAK_ISSUER": f"{origin}/authKeycloak/realms/open-webui",
+        "KEYCLOAK_REDIRECT_URI": f"http://{lan_ip}:8888/api/v1/auth/keycloak/callback",
+        "KEYCLOAK_ALLOWED_REDIRECTS": (
+            f"http://{lan_ip}:8888,{origin},"
+            "http://localhost:8888,http://127.0.0.1:8888,"
+            "http://localhost:3000,http://127.0.0.1:3000"
+        ),
+        "OPENID_PROVIDER_URL": f"{origin}/authKeycloak/realms/open-webui/.well-known/openid-configuration",
+        "OPENID_REDIRECT_URI": f"{origin}/oauth/oidc/callback",
         "OPENWEBUI_URL": "http://open-webui-2:8080",
         "OPENWEBUI_TRUSTED_AUTH": "true",
         "OPENWEBUI_TRUSTED_HEADER": values.get("OPENWEBUI_TRUSTED_HEADER", "X-OWUI-Trusted-Email"),
@@ -533,6 +690,7 @@ def ensure_env() -> None:
         updates,
         remove=("WEBUI_AUTH_TRUSTED_EMAIL_HEADER", "WEBUI_AUTH_TRUSTED_NAME_HEADER"),
     )
+    print(f"[ok] .env: public origin {origin} (LAN IP {lan_ip})")
     print("[ok] .env: preserved existing secrets; updated OAuth/OpenWebUI settings")
 
 
@@ -540,8 +698,12 @@ def main() -> int:
     print("reSpotIt full-stack prepare")
     ensure_assets()
     patch_nginx()
+    patch_nginx_hosts()
     patch_ca_bundle()
-    ensure_env()
+    lan_ip, origin = public_origin()
+    print(f"[ok] LAN IP: {lan_ip} (public origin {origin})")
+    patch_realm_export(lan_ip, origin)
+    ensure_env(lan_ip, origin)
     print("prepare: done")
     return 0
 

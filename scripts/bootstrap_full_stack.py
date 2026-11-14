@@ -143,6 +143,149 @@ def restart_nginx() -> None:
         print(f"[warn] nginx: restart failed ({(res.stderr or res.stdout)[:160]})")
 
 
+# ── public origin (LAN IP) ─────────────────────────────────────────────────
+def public_origin(values: dict[str, str]) -> str:
+    return (values.get("PUBLIC_ORIGIN") or "https://localhost").rstrip("/")
+
+
+def _admin_token(origin: str, values: dict[str, str]) -> str | None:
+    user = values.get("KEYCLOAK_ADMIN", "admin").strip() or "admin"
+    password = values.get("KEYCLOAK_ADMIN_PASSWORD", "").strip()
+    if not password:
+        print("[warn] Keycloak LAN redirects: KEYCLOAK_ADMIN_PASSWORD is not set")
+        return None
+    status, data = request(
+        "POST",
+        f"{origin}/authKeycloak/realms/master/protocol/openid-connect/token",
+        form={
+            "grant_type": "password",
+            "client_id": "admin-cli",
+            "username": user,
+            "password": password,
+        },
+    )
+    if status == 200 and isinstance(data, dict) and data.get("access_token"):
+        return str(data["access_token"])
+    print(f"[warn] Keycloak LAN redirects: admin login failed ({status}: {str(data)[:120]})")
+    return None
+
+
+def ensure_keycloak_redirects(values: dict[str, str]) -> bool:
+    """Add the LAN callback to the *live* realm (the export only helps fresh DBs)."""
+    origin = public_origin(values)
+    lan_ip = values.get("LAN_IP", "").strip()
+    realm = values.get("KEYCLOAK_REALM", "open-webui").strip() or "open-webui"
+    client_id = values.get("OAUTH_CLIENT_ID", "open-webui").strip() or "open-webui"
+
+    token = _admin_token(origin, values)
+    if not token:
+        return False
+
+    status, clients = request(
+        "GET",
+        f"{origin}/authKeycloak/admin/realms/{realm}/clients?clientId={client_id}",
+        headers=auth(token),
+    )
+    if status != 200 or not isinstance(clients, list) or not clients:
+        print(f"[warn] Keycloak LAN redirects: client {client_id} not found ({status})")
+        return False
+    client = clients[0]
+
+    status, full = request(
+        "GET",
+        f"{origin}/authKeycloak/admin/realms/{realm}/clients/{client['id']}",
+        headers=auth(token),
+    )
+    if status != 200 or not isinstance(full, dict):
+        print(f"[warn] Keycloak LAN redirects: client read failed ({status})")
+        return False
+
+    redirects = list(full.get("redirectUris") or [])
+    origins = list(full.get("webOrigins") or [])
+    wanted_redirects = [f"{origin}/oauth/oidc/callback"]
+    wanted_origins = [origin]
+    if lan_ip:
+        wanted_redirects += [
+            f"http://{lan_ip}:8888/oauth/oidc/callback",
+            f"http://{lan_ip}:8888/api/v1/auth/keycloak/callback",
+        ]
+        wanted_origins.append(f"http://{lan_ip}:8888")
+
+    changed = False
+    for url in wanted_redirects:
+        if url not in redirects:
+            redirects.append(url)
+            changed = True
+    for url in wanted_origins:
+        if url not in origins:
+            origins.append(url)
+            changed = True
+
+    if not changed:
+        print(f"[ok] Keycloak redirects: {origin} already registered")
+        return True
+
+    full["redirectUris"] = redirects
+    full["webOrigins"] = origins
+    status, data = request(
+        "PUT",
+        f"{origin}/authKeycloak/admin/realms/{realm}/clients/{client['id']}",
+        body=full,
+        headers=auth(token),
+    )
+    if status in (200, 204):
+        print(f"[ok] Keycloak redirects: added {origin}")
+        return True
+    print(f"[warn] Keycloak redirects: update failed ({status}: {str(data)[:160]})")
+    return False
+
+
+def ensure_webui_url(values: dict[str, str]) -> bool:
+    """Point Open WebUI's stored ``webui.url`` at the LAN origin.
+
+    Open WebUI persists this value in Postgres and reads it on every OAuth
+    redirect, so an old ``https://localhost`` row keeps sending other devices
+    to their own localhost even after the environment is fixed.
+    """
+    origin = public_origin(values)
+    db = container_id("openwebui-db")
+    if not db:
+        print("[warn] Open WebUI URL: openwebui-db container not found")
+        return False
+
+    user = values.get("OPENWEBUI_DB_USER", "openwebui")
+    name = values.get("OPENWEBUI_DB_NAME", "openwebui")
+    select = "select value::text from config where key='webui.url';"
+
+    res = run(["docker", "exec", "-i", db, "psql", "-U", user, "-d", name, "-tA", "-c", select], timeout=30)
+    current = (res.stdout or "").strip()
+    if res.returncode == 0 and current.strip('"') == origin:
+        print(f"[ok] Open WebUI URL: {origin}")
+        return True
+    if res.returncode != 0:
+        print(f"[warn] Open WebUI URL: config read failed ({(res.stderr or '').strip()[:160]})")
+        return False
+
+    escaped = origin.replace("'", "''")
+    sql = (
+        "insert into config (key, value, updated_at) "
+        f"values ('webui.url', '\"{escaped}\"'::json, extract(epoch from now())::bigint) "
+        "on conflict (key) do update set value=excluded.value, updated_at=excluded.updated_at;"
+    )
+    res = run(["docker", "exec", "-i", db, "psql", "-U", user, "-d", name, "-c", sql], timeout=30)
+    if res.returncode != 0:
+        print(f"[warn] Open WebUI URL: update failed ({(res.stderr or '').strip()[:160]})")
+        return False
+
+    res = run(["docker", "exec", "-i", db, "psql", "-U", user, "-d", name, "-tA", "-c", select], timeout=30)
+    now = (res.stdout or "").strip().strip('"')
+    if now == origin:
+        print(f"[ok] Open WebUI URL: {origin}")
+        return True
+    print(f"[warn] Open WebUI URL: read-back mismatch ({now[:80]})")
+    return False
+
+
 def wait_container(service: str, timeout: int) -> str | None:
     deadline = time.time() + timeout
     last = "not created"
@@ -429,8 +572,9 @@ def start_sync(api_base: str, token: str) -> bool:
 # ── verification ────────────────────────────────────────────────────────────
 def verify(api_base: str, values: dict[str, str], service_token: str | None) -> bool:
     ok = True
+    origin = public_origin(values)
 
-    status, cfg = request("GET", "https://127.0.0.1/api/config")
+    status, cfg = request("GET", f"{origin}/api/config")
     if status == 200 and isinstance(cfg, dict):
         features = cfg.get("features") or {}
         providers = (cfg.get("oauth") or {}).get("providers") or {}
@@ -452,11 +596,28 @@ def verify(api_base: str, values: dict[str, str], service_token: str | None) -> 
     realm = values.get("KEYCLOAK_REALM", "open-webui")
     client_id = values.get("OAUTH_CLIENT_ID", "open-webui")
     secret = values.get("OAUTH_CLIENT_SECRET", "")
-    redirect = values.get("OPENID_REDIRECT_URI", "https://localhost/oauth/oidc/callback")
+    redirect = values.get("OPENID_REDIRECT_URI", f"{origin}/oauth/oidc/callback")
+
+    status, discovery = request(
+        "GET",
+        f"{origin}/authKeycloak/realms/{realm}/.well-known/openid-configuration",
+    )
+    if status == 200 and isinstance(discovery, dict):
+        expected_issuer = f"{origin}/authKeycloak/realms/{realm}"
+        issuer = discovery.get("issuer")
+        if issuer == expected_issuer:
+            print(f"[ok] Keycloak issuer: {issuer}")
+        else:
+            print(f"[error] Keycloak issuer is {issuer}, expected {expected_issuer}")
+            ok = False
+    else:
+        print(f"[error] Keycloak discovery failed ({status})")
+        ok = False
+
     if secret:
         status, data = request(
             "POST",
-            f"https://127.0.0.1/authKeycloak/realms/{realm}/protocol/openid-connect/token",
+            f"{origin}/authKeycloak/realms/{realm}/protocol/openid-connect/token",
             form={
                 "grant_type": "authorization_code",
                 "client_id": client_id,
@@ -478,7 +639,7 @@ def verify(api_base: str, values: dict[str, str], service_token: str | None) -> 
         print("[warn] Keycloak client secret: OAUTH_CLIENT_SECRET is empty")
         ok = False
 
-    status, _ = request("GET", "https://127.0.0.1/respotit/api/v1/health")
+    status, _ = request("GET", f"{origin}/respotit/api/v1/health")
     if status == 200:
         print("[ok] nginx /respotit/ route: healthy")
     else:
@@ -518,6 +679,7 @@ def main() -> int:
     values = read_env()
     ssl_enabled = values.get("SSL_ENABLED", "true").strip().lower() != "false"
     api_base = "https://127.0.0.1:8000" if ssl_enabled else "http://127.0.0.1:8000"
+    origin = public_origin(values)
 
     print("reSpotIt full-stack bootstrap")
     restart_nginx()
@@ -529,16 +691,21 @@ def main() -> int:
     wait_container("nginx-proxy", args.timeout)
     wait_container("respotit-mcp", args.timeout)
 
+    # The realm export only seeds a fresh database; patch the live realm and
+    # Open WebUI's persisted URL so every exposed redirect names the LAN IP.
+    ensure_keycloak_redirects(values)
+    ensure_webui_url(values)
+
     core_ok = True
     core_ok &= wait_http("reSpotIt API", f"{api_base}/api/v1/health", args.timeout)
-    core_ok &= wait_http("Open WebUI (public)", "https://127.0.0.1/api/config", args.timeout)
+    core_ok &= wait_http("Open WebUI (public)", f"{origin}/api/config", args.timeout)
     core_ok &= wait_http(
         "Keycloak OIDC discovery",
-        f"https://127.0.0.1/authKeycloak/realms/{values.get('KEYCLOAK_REALM', 'open-webui')}"
+        f"{origin}/authKeycloak/realms/{values.get('KEYCLOAK_REALM', 'open-webui')}"
         "/.well-known/openid-configuration",
         args.timeout,
     )
-    core_ok &= wait_http("nginx /respotit/ route", "https://127.0.0.1/respotit/api/v1/health", args.timeout)
+    core_ok &= wait_http("nginx /respotit/ route", f"{origin}/respotit/api/v1/health", args.timeout)
     wait_http("respotit-mcp health", "http://127.0.0.1:8091/health", args.timeout)
 
     if not core_ok or not api_container:
@@ -573,10 +740,10 @@ def main() -> int:
 
     print("")
     print("Full stack ready")
-    print("  reSpotIt UI:   http://localhost:8888")
-    print("  reSpotIt API:  https://localhost:8000")
-    print("  Open WebUI:    https://localhost/")
-    print("  Keycloak:      https://localhost/authKeycloak/admin/")
+    print(f"  reSpotIt UI:   http://{values.get('LAN_IP', 'localhost')}:8888")
+    print(f"  reSpotIt API:  https://{values.get('LAN_IP', 'localhost')}:8000")
+    print(f"  Open WebUI:    {origin}/")
+    print(f"  Keycloak:      {origin}/authKeycloak/admin/")
     print("  MCP health:    http://127.0.0.1:8091/health")
     return 0
 

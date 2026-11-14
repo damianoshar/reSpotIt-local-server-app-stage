@@ -26,6 +26,13 @@ command -v docker >/dev/null 2>&1 || {
 echo "[..] Preparing full-stack files and settings..."
 python3 scripts/prepare_full_stack.py
 
+# Read the LAN origin that prepare just wrote, so every printed URL is
+# reachable from a phone or a second PC (never localhost).
+LAN_IP="$(grep -E '^LAN_IP=' .env | head -1 | cut -d= -f2-)"
+PUBLIC_ORIGIN="$(grep -E '^PUBLIC_ORIGIN=' .env | head -1 | cut -d= -f2-)"
+[ -n "$LAN_IP" ] || LAN_IP="localhost"
+[ -n "$PUBLIC_ORIGIN" ] || PUBLIC_ORIGIN="https://localhost"
+
 echo "[..] Starting containers..."
 docker compose -f docker-compose.yml -f docker-compose.full.yml up -d --build
 
@@ -44,15 +51,15 @@ if [ "$BOOTSTRAP_RC" -eq 0 ]; then
 else
     echo "[warn] Full stack started with warnings. See the bootstrap output above."
 fi
-echo "   reSpotIt frontend: http://localhost:8888"
-echo "   reSpotIt API:      https://localhost:8000"
-echo "   OpenWebUI:         https://localhost/"
-echo "   Keycloak Admin:    https://localhost/authKeycloak/admin/"
-echo "   MinIO Console:     http://localhost:9001"
-echo "   Redis Insight:     http://localhost:5540"
+echo "   reSpotIt frontend: http://$LAN_IP:8888"
+echo "   reSpotIt API:      https://$LAN_IP:8000"
+echo "   OpenWebUI:         $PUBLIC_ORIGIN/"
+echo "   Keycloak Admin:    $PUBLIC_ORIGIN/authKeycloak/admin/"
+echo "   MinIO Console:     http://$LAN_IP:9001"
+echo "   Redis Insight:     http://$LAN_IP:5540"
 echo ""
-echo "First run: open https://localhost/ and use the Keycloak Register link"
-echo "to create your account. Then connect Spotify at http://localhost:8888"
+echo "First run: open $PUBLIC_ORIGIN/ and use the Keycloak Register link"
+echo "to create your account. Then connect Spotify at http://$LAN_IP:8888"
 echo "and re-run this script to sync the library."
 
 exit "$BOOTSTRAP_RC"
